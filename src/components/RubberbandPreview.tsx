@@ -1,6 +1,7 @@
 import React from 'react';
 import { Point2D } from '../types/cad';
 import { DrawSession } from '../types/sketchInteraction';
+import { calculate3PointArc } from '../core/2d/GeometryMath';
 
 export interface RubberbandPreviewProps {
   session: DrawSession;
@@ -56,6 +57,241 @@ export const RubberbandPreview: React.FC<RubberbandPreviewProps> = ({
         strokeDasharray={strokeDasharray}
         fill="none"
       />
+    );
+  }
+
+  if (tool === 'RECTANGLE') {
+    const x = Math.min(startScreen.x, cursorScreen.x);
+    const y = Math.min(startScreen.y, cursorScreen.y);
+    const width = Math.abs(cursorScreen.x - startScreen.x);
+    const height = Math.abs(cursorScreen.y - startScreen.y);
+
+    return (
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        stroke={strokeColor}
+        strokeWidth={strokeWidth}
+        strokeDasharray={strokeDasharray}
+        fill="none"
+      />
+    );
+  }
+
+  if (tool === 'ARC_3P' || tool === 'ARC') {
+    // 步驟 1：已定起點 (startPoint)，游標正在指定終點 (secondPoint)
+    if (session.step === 1 || !session.secondPoint) {
+      return (
+        <g>
+          <line
+            x1={startScreen.x}
+            y1={startScreen.y}
+            x2={cursorScreen.x}
+            y2={cursorScreen.y}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            fill="none"
+          />
+          <circle cx={startScreen.x} cy={startScreen.y} r={3} fill={strokeColor} />
+          <circle cx={cursorScreen.x} cy={cursorScreen.y} r={2.5} fill={strokeColor} opacity={0.6} />
+        </g>
+      );
+    }
+
+    // 步驟 2：已定起點 (startPoint) 與終點 (secondPoint)，游標 (currentCursor) 正在指定弧上通過點
+    const secondScreen = worldToScreen(session.secondPoint);
+    const arc = calculate3PointArc(session.startPoint, session.secondPoint, session.currentCursor);
+
+    if (arc) {
+      const screenRadius = arc.radius * scale;
+      const worldStart = {
+        x: arc.center.x + arc.radius * Math.cos(arc.startAngle),
+        y: arc.center.y + arc.radius * Math.sin(arc.startAngle),
+      };
+      const worldEnd = {
+        x: arc.center.x + arc.radius * Math.cos(arc.endAngle),
+        y: arc.center.y + arc.radius * Math.sin(arc.endAngle),
+      };
+      const start = worldToScreen(worldStart);
+      const end = worldToScreen(worldEnd);
+
+      let diff = arc.endAngle - arc.startAngle;
+      while (diff < 0) diff += 2 * Math.PI;
+      while (diff >= 2 * Math.PI) diff -= 2 * Math.PI;
+
+      const largeArcFlag = diff > Math.PI ? 1 : 0;
+      const sweepFlag = 0;
+
+      const pathData = `M ${start.x} ${start.y} A ${screenRadius} ${screenRadius} 0 ${largeArcFlag} ${sweepFlag} ${end.x} ${end.y}`;
+
+      return (
+        <g>
+          <path
+            d={pathData}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            fill="none"
+          />
+          <circle cx={startScreen.x} cy={startScreen.y} r={3.5} fill={strokeColor} />
+          <circle cx={secondScreen.x} cy={secondScreen.y} r={3.5} fill={strokeColor} />
+          <circle cx={cursorScreen.x} cy={cursorScreen.y} r={2.5} fill={strokeColor} opacity={0.8} />
+        </g>
+      );
+    }
+
+    // 若三點共線或距離過近，則呈現連接起終點的輔助虛線
+    return (
+      <g>
+        <line
+          x1={startScreen.x}
+          y1={startScreen.y}
+          x2={secondScreen.x}
+          y2={secondScreen.y}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          fill="none"
+        />
+        <circle cx={startScreen.x} cy={startScreen.y} r={3} fill={strokeColor} />
+        <circle cx={secondScreen.x} cy={secondScreen.y} r={3} fill={strokeColor} />
+      </g>
+    );
+  }
+
+  if (tool === 'ARC_CENTER') {
+    // 步驟 1：已定圓心 (startPoint)，游標正在指定半徑與起點 P_start
+    if (session.step === 1 || !session.secondPoint) {
+      const centerScreen = startScreen;
+      const radiusScreen = Math.hypot(cursorScreen.x - centerScreen.x, cursorScreen.y - centerScreen.y);
+
+      return (
+        <g>
+          {/* 半徑導引虛線 */}
+          <line
+            x1={centerScreen.x}
+            y1={centerScreen.y}
+            x2={cursorScreen.x}
+            y2={cursorScreen.y}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            fill="none"
+          />
+          {/* 輔助參考全圓輪廓 */}
+          {radiusScreen > 2 && (
+            <circle
+              cx={centerScreen.x}
+              cy={centerScreen.y}
+              r={radiusScreen}
+              stroke={strokeColor}
+              strokeWidth={1}
+              strokeDasharray="3,3"
+              opacity={0.35}
+              fill="none"
+            />
+          )}
+          {/* 圓心與游標點指示 */}
+          <circle cx={centerScreen.x} cy={centerScreen.y} r={3.5} fill={strokeColor} />
+          <circle cx={cursorScreen.x} cy={cursorScreen.y} r={2.5} fill={strokeColor} opacity={0.7} />
+        </g>
+      );
+    }
+
+    // 步驟 2：已定圓心 (startPoint) 與起點 P_start (secondPoint)，游標正在指定終止角度 endAngle
+    const C = session.startPoint;
+    const P_start = session.secondPoint;
+    const centerScreen = startScreen;
+    const startPtScreen = worldToScreen(P_start);
+
+    const radius = Math.hypot(P_start.x - C.x, P_start.y - C.y);
+    const screenRadius = radius * scale;
+
+    const startAngle = Math.atan2(P_start.y - C.y, P_start.x - C.x);
+    const currAngle = Math.atan2(session.currentCursor.y - C.y, session.currentCursor.x - C.x);
+
+    // 計算當前在圓弧半徑上的終點座標
+    const worldEnd = {
+      x: C.x + radius * Math.cos(currAngle),
+      y: C.y + radius * Math.sin(currAngle),
+    };
+    const endPtScreen = worldToScreen(worldEnd);
+
+    // 計算逆時針夾角以決定是否為大弧 (Large Arc)
+    let diff = currAngle - startAngle;
+    while (diff < 0) diff += 2 * Math.PI;
+    while (diff >= 2 * Math.PI) diff -= 2 * Math.PI;
+
+    const largeArcFlag = diff > Math.PI ? 1 : 0;
+    const sweepFlag = 0; // CAD 標準逆時針在 SVG 畫面中對應 sweepFlag = 0
+
+    const arcPathData = `M ${startPtScreen.x} ${startPtScreen.y} A ${screenRadius} ${screenRadius} 0 ${largeArcFlag} ${sweepFlag} ${endPtScreen.x} ${endPtScreen.y}`;
+    const sectorPathData = `M ${centerScreen.x} ${centerScreen.y} L ${startPtScreen.x} ${startPtScreen.y} A ${screenRadius} ${screenRadius} 0 ${largeArcFlag} ${sweepFlag} ${endPtScreen.x} ${endPtScreen.y} Z`;
+
+    return (
+      <g>
+        {/* 扇形半透明填充 */}
+        {diff > 0.005 && screenRadius > 1 && (
+          <path d={sectorPathData} fill="rgba(245, 158, 11, 0.08)" />
+        )}
+
+        {/* 扇形導引線：圓心至起點 */}
+        <line
+          x1={centerScreen.x}
+          y1={centerScreen.y}
+          x2={startPtScreen.x}
+          y2={startPtScreen.y}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          fill="none"
+        />
+
+        {/* 扇形導引線：圓心至當前終止角度點 */}
+        <line
+          x1={centerScreen.x}
+          y1={centerScreen.y}
+          x2={endPtScreen.x}
+          y2={endPtScreen.y}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          fill="none"
+        />
+
+        {/* 若游標離圓弧半徑有距離，提供從弧終點連至實際游標的對齊虛線 */}
+        <line
+          x1={endPtScreen.x}
+          y1={endPtScreen.y}
+          x2={cursorScreen.x}
+          y2={cursorScreen.y}
+          stroke={strokeColor}
+          strokeWidth={1}
+          strokeDasharray="2,2"
+          opacity={0.4}
+          fill="none"
+        />
+
+        {/* 掃掠區間的圓弧虛線預覽 */}
+        {diff > 0.005 && screenRadius > 1 && (
+          <path
+            d={arcPathData}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            fill="none"
+          />
+        )}
+
+        {/* 圓心、起點、當前弧端點與游標標記點 */}
+        <circle cx={centerScreen.x} cy={centerScreen.y} r={3.5} fill={strokeColor} />
+        <circle cx={startPtScreen.x} cy={startPtScreen.y} r={3} fill={strokeColor} />
+        <circle cx={endPtScreen.x} cy={endPtScreen.y} r={3} fill={strokeColor} />
+        <circle cx={cursorScreen.x} cy={cursorScreen.y} r={2} fill={strokeColor} opacity={0.8} />
+      </g>
     );
   }
 

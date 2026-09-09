@@ -108,6 +108,29 @@ export const useCADStore = create<CADState>((set, get) => ({
     };
   }),
 
+  toggleConstruction: (entityId: string) => set((state) => {
+    if (!state.activeSketchId) return state;
+
+    const sketch = state.document.featureTree.find(
+      (f) => f.id === state.activeSketchId && f.type === 'SKETCH'
+    ) as SketchFeature | undefined;
+
+    if (!sketch) return state;
+
+    const existingEntity = sketch.entities.find((e) => e.id === entityId);
+    if (!existingEntity) return state;
+
+    const updatedEntity = {
+      ...existingEntity,
+      isConstruction: !existingEntity.isConstruction,
+    } as CADEntity2D;
+
+    return {
+      ...pushUndoState(state),
+      document: updateEntityInSketch(state.document, state.activeSketchId, updatedEntity),
+    };
+  }),
+
   addConstraint: (constraint) => set((state) => {
     if (!state.activeSketchId) return state;
     return {

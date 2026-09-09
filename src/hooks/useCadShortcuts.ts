@@ -16,7 +16,7 @@ export function useCadShortcuts() {
 
       // Retrieve stable actions and current state from the store directly
       const store = useCADStore.getState();
-      const { setTool, clearSelection, toggleOsnap, undo, redo, removeEntity, selectedEntityIds } = store;
+      const { setTool, clearSelection, toggleOsnap, undo, redo, removeEntity, toggleConstruction, selectedEntityIds } = store;
 
       const isMac = navigator.userAgent.toLowerCase().includes('mac');
       const isCmdOrCtrl = isMac ? event.metaKey : event.ctrlKey;
@@ -43,8 +43,23 @@ export function useCadShortcuts() {
           case 'l':
             setTool('LINE');
             break;
+          case 's':
+            setTool('SELECT');
+            break;
+          case 'r':
+            setTool('RECTANGLE');
+            break;
           case 'c':
             setTool('CIRCLE');
+            break;
+          case 'a':
+            setTool('ARC_3P');
+            break;
+          case 'x':
+            if (selectedEntityIds.length > 0) {
+              event.preventDefault();
+              selectedEntityIds.forEach((id) => toggleConstruction(id));
+            }
             break;
           case 'escape':
             setTool('SELECT');

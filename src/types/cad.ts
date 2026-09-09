@@ -17,6 +17,7 @@ export interface BaseCADEntity2D {
   locked: boolean;
   color?: string;
   lineWidth?: number;
+  isConstruction?: boolean;
 }
 
 export interface LineEntity extends BaseCADEntity2D {

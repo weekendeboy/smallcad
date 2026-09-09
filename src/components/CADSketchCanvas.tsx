@@ -106,9 +106,10 @@ export const CADSketchCanvas: React.FC = () => {
     [viewportHandlers, screenToWorld, handleCanvasClick]
   );
 
-  // 取得目前草圖內的 entities, profiles 與 solverState
+  // 取得目前草圖內的 entities, profiles, constraints 與 solverState
   let currentEntities: any[] = [];
   let currentProfiles: any[] = [];
+  let currentConstraints: any[] = [];
   let currentSolverState: any = 'UnderDefined';
   if (activeSketchId) {
     const sketch = document.featureTree.find(
@@ -117,6 +118,7 @@ export const CADSketchCanvas: React.FC = () => {
     if (sketch) {
       currentEntities = sketch.entities;
       currentProfiles = sketch.profiles || [];
+      currentConstraints = sketch.constraints || [];
       currentSolverState = sketch.solverState;
     }
   }
@@ -182,15 +184,73 @@ export const CADSketchCanvas: React.FC = () => {
             snap={currentSnap}
             worldToScreen={worldToScreen}
           />
+          {/* 固定點 (Fix Constraint) 標記層 (金黃色微型鎖頭圖示) */}
+          {currentConstraints
+            .filter((c: any) => c.type === 'fix' && c.entityIds?.length > 0)
+            .map((c: any) => {
+              const entityId = c.entityIds[0];
+              const ptIdx = c.pointIndices?.[0] ?? 0;
+              const entity = currentEntities.find((e: any) => e.id === entityId);
+              if (!entity) return null;
+
+              let worldPt: Point2D | null = null;
+              if (entity.type === 'line') {
+                worldPt = ptIdx === 1 ? entity.end : entity.start;
+              } else if (entity.type === 'circle' || entity.type === 'arc') {
+                worldPt = entity.center;
+              } else if (entity.type === 'polyline') {
+                worldPt = entity.points?.[ptIdx] || entity.points?.[0] || null;
+              }
+
+              if (!worldPt) return null;
+              const screenPt = worldToScreen(worldPt);
+
+              return (
+                <g
+                  key={c.id}
+                  transform={`translate(${screenPt.x}, ${screenPt.y})`}
+                  className="pointer-events-none select-none"
+                >
+                  {/* 背景微光圈 */}
+                  <circle cx="0" cy="0" r="8" fill="#18181b" stroke="#eab308" strokeWidth="1.2" opacity="0.95" />
+                  {/* 鎖扣 (Lock Shackle) */}
+                  <path
+                    d="M -2.5 -1 L -2.5 -3.2 A 2.5 2.5 0 0 1 2.5 -3.2 L 2.5 -1"
+                    fill="none"
+                    stroke="#facc15"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                  />
+                  {/* 鎖身 (Lock Body) */}
+                  <rect
+                    x="-3.5"
+                    y="-1"
+                    width="7"
+                    height="5.5"
+                    rx="1"
+                    fill="#facc15"
+                  />
+                  {/* 鎖孔 (Keyhole) */}
+                  <circle cx="0" cy="1.6" r="0.6" fill="#18181b" />
+                </g>
+              );
+            })}
         </svg>
       )}
 
       {/* AutoCAD 風格的黑色半透明狀態列 */}
-      <div className="absolute bottom-0 right-0 m-4 px-4 py-2 bg-black bg-opacity-70 text-green-400 font-mono text-sm rounded pointer-events-none select-none flex gap-6">
+      <div className="absolute bottom-0 right-0 m-4 px-4 py-2 bg-black bg-opacity-70 text-green-400 font-mono text-sm rounded pointer-events-none select-none flex gap-6 items-center">
         <div>
           {drawSession.isDrawing
             ? `Drawing: ${currentTool} (Pick next point or ESC to exit)`
             : 'Ready'}
+        </div>
+        <div className="text-sky-300 font-bold">
+          {currentProfiles.length > 0
+            ? `Profiles: ${currentProfiles.length} (${currentProfiles
+                .reduce((acc, p) => acc + p.area, 0)
+                .toFixed(1)} mm²)`
+            : 'Profiles: 0 (Open)'}
         </div>
         <div className={currentSnap ? 'text-emerald-400 font-bold' : 'text-green-400'}>
           {snapLabel}

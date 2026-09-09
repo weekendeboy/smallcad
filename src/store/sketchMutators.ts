@@ -5,7 +5,7 @@ import { findClosedProfiles } from '../core/2d/TopologyEngine';
 export function applyConstraintsToSketch(sketch: SketchFeature): SketchFeature {
   const solverResult = solveConstraints(sketch.entities, sketch.constraints);
   const dofState = analyzeSketchDOF(solverResult.entities, sketch.constraints);
-  const profiles = findClosedProfiles(solverResult.entities);
+  const profiles = findClosedProfiles(solverResult.entities, sketch.constraints);
 
   return {
     ...sketch,

@@ -14,5 +14,5 @@ export interface SketchDofState {
   entityStates: Record<string, 'UnderDefined' | 'FullyDefined' | 'OverDefined'>;
 }
 
-export const SOLVER_MAX_ITERATIONS = 50;
+export const SOLVER_MAX_ITERATIONS = 80;
 export const SOLVER_TOLERANCE = 1e-4;

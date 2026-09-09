@@ -11,13 +11,18 @@ import { SketchFeature } from './types/cad';
 import {
   MousePointer2,
   Pencil,
+  Square,
   Undo2,
   Redo2,
   Maximize,
   Circle,
+  CircleDot,
+  Compass,
+  Spline,
   Magnet,
   MoveHorizontal,
   MoveVertical,
+  Lock,
 } from 'lucide-react';
 
 export default function App() {
@@ -38,6 +43,7 @@ export default function App() {
     activeSketchId,
     selectedEntityIds,
     addConstraint,
+    toggleConstruction,
   } = useCADStore();
 
   // 取得當前草圖與求解器狀態
@@ -46,8 +52,16 @@ export default function App() {
   ) as SketchFeature | undefined;
 
   const solverState = activeSketch?.solverState || 'UnderDefined';
-  const hasSelectedEntity = selectedEntityIds.length === 1;
+  const hasSelectedEntities = selectedEntityIds.length > 0;
+  const isSingleSelected = selectedEntityIds.length === 1;
   const selectedId = selectedEntityIds[0];
+  const selectedEntities =
+    activeSketch?.entities.filter((e) => selectedEntityIds.includes(e.id)) || [];
+  const isAnySelectedConstruction = selectedEntities.some((e) => e.isConstruction);
+
+  const handleToggleConstruction = () => {
+    selectedEntityIds.forEach((id) => toggleConstruction(id));
+  };
 
   const handleAddHorizontal = () => {
     if (!selectedId) return;
@@ -64,6 +78,16 @@ export default function App() {
       id: crypto.randomUUID(),
       type: 'vertical',
       entityIds: [selectedId],
+    });
+  };
+
+  const handleAddFix = () => {
+    if (!selectedId) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'fix',
+      entityIds: [selectedId],
+      pointIndices: [0], // 鎖定起點或中心點
     });
   };
 
@@ -99,6 +123,17 @@ export default function App() {
               <Pencil size={18} />
             </button>
             <button
+              onClick={() => setTool('RECTANGLE')}
+              className={`p-1.5 rounded ${
+                currentTool === 'RECTANGLE'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Rectangle (R)"
+            >
+              <Square size={18} />
+            </button>
+            <button
               onClick={() => setTool('CIRCLE')}
               className={`p-1.5 rounded ${
                 currentTool === 'CIRCLE'
@@ -108,6 +143,28 @@ export default function App() {
               title="Circle (C)"
             >
               <Circle size={18} />
+            </button>
+            <button
+              onClick={() => setTool('ARC_3P')}
+              className={`p-1.5 rounded ${
+                currentTool === 'ARC_3P' || currentTool === 'ARC'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Arc (A)"
+            >
+              <Compass size={18} />
+            </button>
+            <button
+              onClick={() => setTool('ARC_CENTER')}
+              className={`p-1.5 rounded ${
+                currentTool === 'ARC_CENTER'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Center-Start-End Arc"
+            >
+              <CircleDot size={18} />
             </button>
 
             <div className="w-px h-5 bg-neutral-800 mx-1" />
@@ -124,23 +181,45 @@ export default function App() {
               <Magnet size={18} />
             </button>
 
-            {/* Constraints toolbar (appears when 1 entity is selected) */}
-            {hasSelectedEntity && (
+            {/* Constraints toolbar & Entity operations (appears when entity is selected) */}
+            {hasSelectedEntities && (
               <>
                 <div className="w-px h-5 bg-neutral-800 mx-1" />
+                {isSingleSelected && (
+                  <>
+                    <button
+                      onClick={handleAddHorizontal}
+                      className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                      title="Add Horizontal Constraint"
+                    >
+                      <MoveHorizontal size={18} />
+                    </button>
+                    <button
+                      onClick={handleAddVertical}
+                      className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                      title="Add Vertical Constraint"
+                    >
+                      <MoveVertical size={18} />
+                    </button>
+                    <button
+                      onClick={handleAddFix}
+                      className="p-1.5 rounded text-neutral-400 hover:text-yellow-400 hover:bg-neutral-800 transition-colors"
+                      title="Add Fix Point Constraint (Lock Anchor)"
+                    >
+                      <Lock size={18} />
+                    </button>
+                  </>
+                )}
                 <button
-                  onClick={handleAddHorizontal}
-                  className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-                  title="Add Horizontal Constraint"
+                  onClick={handleToggleConstruction}
+                  className={`p-1.5 rounded transition-colors ${
+                    isAnySelectedConstruction
+                      ? 'bg-purple-950/80 text-purple-400 border border-purple-800/50'
+                      : 'text-neutral-400 hover:text-purple-400 hover:bg-neutral-800'
+                  }`}
+                  title="切換建構線 (Toggle Construction) [X]"
                 >
-                  <MoveHorizontal size={18} />
-                </button>
-                <button
-                  onClick={handleAddVertical}
-                  className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-                  title="Add Vertical Constraint"
-                >
-                  <MoveVertical size={18} />
+                  <Spline size={18} />
                 </button>
               </>
             )}

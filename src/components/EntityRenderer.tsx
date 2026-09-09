@@ -32,8 +32,15 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
     // 若為 UnderDefined：呈現經典天藍色 #60a5fa
     let strokeColor = '#60a5fa';
     let strokeWidth = entity.lineWidth || 1.5;
+    let strokeDasharray: string | undefined = undefined;
 
-    if (entityState === 'OverDefined') {
+    if (entity.isConstruction === true) {
+      strokeColor = isSelected ? '#38bdf8' : '#c084fc';
+      strokeDasharray = '6,4';
+      if (isSelected) {
+        strokeWidth = 2.5;
+      }
+    } else if (entityState === 'OverDefined') {
       strokeColor = '#ef4444';
       strokeWidth = 2.5;
     } else if (isSelected) {
@@ -48,6 +55,7 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
     const commonProps = {
       stroke: strokeColor,
       strokeWidth,
+      strokeDasharray,
       fill: 'none',
       style: { cursor: 'pointer' },
       className: `cad-entity cad-entity-${entity.type}`,

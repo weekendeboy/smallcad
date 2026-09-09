@@ -1,5 +1,5 @@
-import { CADEntity2D, Point2D, SketchProfile } from '../../types/cad';
-import { PlanarGraph, GraphEdge, GraphNode } from './TopologyGraph';
+import { CADEntity2D, Constraint, Point2D, SketchProfile } from '../../types/cad';
+import { PlanarGraph, GraphEdge } from './TopologyGraph';
 
 /**
  * Computes the signed area of a 2D polygon using the Shoelace formula.
@@ -23,18 +23,29 @@ export function calculateSignedArea(points: Point2D[]): number {
  * Identifies and constructs closed planar sketch profiles from CAD entities.
  *
  * Algorithm Overview:
- * 1. Constructs a planar directed graph from CAD entities.
- * 2. Sorts outgoing edges of each node by polar angle ascending (CCW order).
- * 3. Traverses faces using the Left-most Turn rule (next CW edge relative to incoming reverse edge).
- * 4. Calculates signed area using the Shoelace formula.
- * 5. Returns all valid CCW loops (area > 0) as SketchProfile objects.
+ * 1. Constructs a planar directed graph from CAD entities and coincident constraints.
+ * 2. Merges connected vertices within 1e-3 tolerance or coincident constraints.
+ * 3. Sorts outgoing edges of each node by polar angle ascending (CCW order).
+ * 4. Traverses faces using the Left-most Turn rule (next CW edge relative to incoming reverse edge).
+ * 5. Calculates signed area using the Shoelace formula.
+ * 6. Returns all valid CCW loops (area > 0) as SketchProfile objects.
  */
 export function findClosedProfiles(
   entities: CADEntity2D[],
-  tolerance: number = 1e-4
+  constraintsOrTolerance?: Constraint[] | number,
+  tolerance: number = 1e-3
 ): SketchProfile[] {
-  // 1. Build directed planar graph from CAD entities
-  const graph = PlanarGraph.buildFromEntities(entities, tolerance);
+  let constraints: Constraint[] = [];
+  let tol = tolerance;
+
+  if (Array.isArray(constraintsOrTolerance)) {
+    constraints = constraintsOrTolerance;
+  } else if (typeof constraintsOrTolerance === 'number') {
+    tol = constraintsOrTolerance;
+  }
+
+  // 1. Build directed planar graph from CAD entities with constraint & tolerance support
+  const graph = PlanarGraph.buildFromEntities(entities, constraints, tol);
 
   // 2. Sort outgoing edges for each node by angle ascending
   for (const node of graph.nodes.values()) {

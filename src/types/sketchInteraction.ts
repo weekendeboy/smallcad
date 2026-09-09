@@ -3,6 +3,7 @@ import { Point2D } from './cad';
 export interface DrawSession {
   isDrawing: boolean;
   startPoint: Point2D | null;
+  secondPoint?: Point2D | null;
   currentCursor: Point2D | null;
   step: number;
   polylinePoints?: Point2D[];
@@ -16,6 +17,7 @@ export type PreviewEntity =
 export const createInitialDrawSession = (): DrawSession => ({
   isDrawing: false,
   startPoint: null,
+  secondPoint: null,
   currentCursor: null,
   step: 0,
   polylinePoints: [],
