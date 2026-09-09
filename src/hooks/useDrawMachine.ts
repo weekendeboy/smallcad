@@ -1,17 +1,33 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useCADStore } from '../store/cadStore';
-import { Point2D, LineEntity, CircleEntity } from '../types/cad';
+import { Point2D, LineEntity, CircleEntity, SketchFeature, CADEntity2D } from '../types/cad';
 import { DrawSession, createInitialDrawSession } from '../types/sketchInteraction';
+import { findSnapPoint, SnapResult } from '../core/2d/SnapManager';
 
 export function useDrawMachine() {
   const currentTool = useCADStore((state) => state.currentTool);
   const activeSketchId = useCADStore((state) => state.activeSketchId);
+  const document = useCADStore((state) => state.document);
+  const osnapEnabled = useCADStore((state) => state.osnapEnabled);
   const addEntity = useCADStore((state) => state.addEntity);
 
   const [drawSession, setDrawSession] = useState<DrawSession>(createInitialDrawSession());
+  const [currentSnap, setCurrentSnap] = useState<SnapResult | null>(null);
+
+  // 取得目前草圖內的 entities
+  let currentEntities: CADEntity2D[] = [];
+  if (activeSketchId) {
+    const sketch = document.featureTree.find(
+      (f) => f.id === activeSketchId && f.type === 'SKETCH'
+    ) as SketchFeature | undefined;
+    if (sketch) {
+      currentEntities = sketch.entities;
+    }
+  }
 
   const cancelDrawing = useCallback(() => {
     setDrawSession(createInitialDrawSession());
+    setCurrentSnap(null);
   }, []);
 
   // 當工具切換時，如果有未完成的繪圖操作則自動取消
@@ -33,31 +49,44 @@ export function useDrawMachine() {
     };
   }, [cancelDrawing]);
 
-  const handlePointerMove = useCallback((worldPt: Point2D) => {
-    setDrawSession((prev) => {
-      if (!prev.isDrawing) return prev;
-      return {
-        ...prev,
-        currentCursor: worldPt,
-      };
-    });
-  }, []);
+  const handlePointerMove = useCallback(
+    (worldPt: Point2D, scale: number = 1.0) => {
+      let snap: SnapResult | null = null;
+      if (osnapEnabled) {
+        snap = findSnapPoint(worldPt, currentEntities, scale);
+      }
+      setCurrentSnap(snap);
+
+      const finalPt = snap ? snap.point : worldPt;
+
+      setDrawSession((prev) => {
+        if (!prev.isDrawing) return prev;
+        return {
+          ...prev,
+          currentCursor: finalPt,
+        };
+      });
+    },
+    [osnapEnabled, currentEntities]
+  );
 
   const handleCanvasClick = useCallback(
     (worldPt: Point2D) => {
       if (!activeSketchId) return;
 
+      const clickPt = currentSnap ? currentSnap.point : worldPt;
+
       if (currentTool === 'LINE') {
         if (!drawSession.isDrawing) {
           setDrawSession({
             isDrawing: true,
-            startPoint: worldPt,
-            currentCursor: worldPt,
+            startPoint: clickPt,
+            currentCursor: clickPt,
             step: 1,
           });
         } else if (drawSession.startPoint) {
-          const dx = worldPt.x - drawSession.startPoint.x;
-          const dy = worldPt.y - drawSession.startPoint.y;
+          const dx = clickPt.x - drawSession.startPoint.x;
+          const dy = clickPt.y - drawSession.startPoint.y;
           const distance = Math.hypot(dx, dy);
 
           if (distance > 0.5) {
@@ -68,7 +97,7 @@ export function useDrawMachine() {
               locked: false,
               type: 'line',
               start: drawSession.startPoint,
-              end: worldPt,
+              end: clickPt,
             };
             addEntity(newLine);
           }
@@ -76,8 +105,8 @@ export function useDrawMachine() {
           // 連續畫線：將當前點作為下一次的起點
           setDrawSession({
             isDrawing: true,
-            startPoint: worldPt,
-            currentCursor: worldPt,
+            startPoint: clickPt,
+            currentCursor: clickPt,
             step: 1,
           });
         }
@@ -85,13 +114,13 @@ export function useDrawMachine() {
         if (!drawSession.isDrawing) {
           setDrawSession({
             isDrawing: true,
-            startPoint: worldPt,
-            currentCursor: worldPt,
+            startPoint: clickPt,
+            currentCursor: clickPt,
             step: 1,
           });
         } else if (drawSession.startPoint) {
-          const dx = worldPt.x - drawSession.startPoint.x;
-          const dy = worldPt.y - drawSession.startPoint.y;
+          const dx = clickPt.x - drawSession.startPoint.x;
+          const dy = clickPt.y - drawSession.startPoint.y;
           const radius = Math.hypot(dx, dy);
 
           if (radius > 0.5) {
@@ -112,11 +141,12 @@ export function useDrawMachine() {
         }
       }
     },
-    [currentTool, drawSession, activeSketchId, addEntity, cancelDrawing]
+    [currentTool, drawSession, activeSketchId, addEntity, cancelDrawing, currentSnap]
   );
 
   return {
     drawSession,
+    currentSnap,
     handlePointerMove,
     handleCanvasClick,
     cancelDrawing,

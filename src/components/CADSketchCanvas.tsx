@@ -6,16 +6,18 @@ import { EntityRenderer } from './EntityRenderer';
 import { Point2D, SketchFeature } from '../types/cad';
 import { useDrawMachine } from '../hooks/useDrawMachine';
 import { RubberbandPreview } from './RubberbandPreview';
+import { SnapMarker } from './SnapMarker';
 
 export const CADSketchCanvas: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [mouseWorldPos, setMouseWorldPos] = useState<Point2D>({ x: 0, y: 0 });
 
-  const { currentTool, activeSketchId, document, selectedEntityIds } = useCADStore();
+  const { currentTool, activeSketchId, document, selectedEntityIds, osnapEnabled } = useCADStore();
 
   const {
     drawSession,
+    currentSnap,
     handlePointerMove: handleDrawPointerMove,
     handleCanvasClick,
   } = useDrawMachine();
@@ -44,7 +46,7 @@ export const CADSketchCanvas: React.FC = () => {
     return () => observer.disconnect();
   }, []);
 
-  // 處理滑鼠移動時更新世界座標與繪圖狀態
+  // 處理滑鼠移動時更新世界座標與繪圖狀態 (包含 scale 以進行鎖點計算)
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       viewportHandlers.onPointerMove(e);
@@ -58,9 +60,9 @@ export const CADSketchCanvas: React.FC = () => {
       
       const worldPt = screenToWorld(screenPt);
       setMouseWorldPos(worldPt);
-      handleDrawPointerMove(worldPt);
+      handleDrawPointerMove(worldPt, scale);
     },
-    [viewportHandlers, screenToWorld, handleDrawPointerMove]
+    [viewportHandlers, screenToWorld, handleDrawPointerMove, scale]
   );
 
   // 處理滑鼠點擊 (過濾掉中鍵平移與右鍵)
@@ -94,12 +96,12 @@ export const CADSketchCanvas: React.FC = () => {
     }
   }
 
-  // 初始時如果視圖大小準備好，將 pan 移到中間
-  useEffect(() => {
-    if (dimensions.width > 0 && dimensions.height > 0 && pan.x === 0 && pan.y === 0) {
-      // 此處略過自動置中，維持預設 {0, 0} 以符合一般的數學原點。
-    }
-  }, [dimensions.width, dimensions.height, pan.x, pan.y]);
+  // 格式化鎖點類型名稱
+  const snapLabel = currentSnap
+    ? `SNAP: [${currentSnap.type.charAt(0).toUpperCase() + currentSnap.type.slice(1)}]`
+    : osnapEnabled
+    ? 'SNAP: FREE'
+    : 'SNAP: OFF';
 
   return (
     <div
@@ -143,6 +145,11 @@ export const CADSketchCanvas: React.FC = () => {
             worldToScreen={worldToScreen}
             scale={scale}
           />
+          {/* 疊加鎖點標記層 (地位於圖元與預覽層上方) */}
+          <SnapMarker
+            snap={currentSnap}
+            worldToScreen={worldToScreen}
+          />
         </svg>
       )}
 
@@ -152,6 +159,9 @@ export const CADSketchCanvas: React.FC = () => {
           {drawSession.isDrawing
             ? `Drawing: ${currentTool} (Pick next point or ESC to exit)`
             : 'Ready'}
+        </div>
+        <div className={currentSnap ? 'text-emerald-400 font-bold' : 'text-green-400'}>
+          {snapLabel}
         </div>
         <div>
           X: {mouseWorldPos.x.toFixed(2)}, Y: {mouseWorldPos.y.toFixed(2)}

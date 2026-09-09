@@ -7,7 +7,7 @@ import React from 'react';
 import { useCADStore } from './store/cadStore';
 import { useCadShortcuts } from './hooks/useCadShortcuts';
 import { CADSketchCanvas } from './components/CADSketchCanvas';
-import { MousePointer2, Pencil, Undo2, Redo2, Maximize, Circle } from 'lucide-react';
+import { MousePointer2, Pencil, Undo2, Redo2, Maximize, Circle, Magnet } from 'lucide-react';
 
 export default function App() {
   // 啟用全域快速鍵
@@ -21,6 +21,8 @@ export default function App() {
     redo,
     canUndo,
     canRedo,
+    osnapEnabled,
+    toggleOsnap,
   } = useCADStore();
 
   return (
@@ -31,7 +33,7 @@ export default function App() {
           <div className="font-bold text-lg mr-4">AI Studio CAD</div>
           
           {/* Tools */}
-          <div className="flex bg-neutral-900 p-1 rounded-md border border-neutral-800">
+          <div className="flex bg-neutral-900 p-1 rounded-md border border-neutral-800 items-center gap-0.5">
             <button
               onClick={() => setTool('SELECT')}
               className={`p-1.5 rounded ${
@@ -59,7 +61,20 @@ export default function App() {
             >
               <Circle size={18} />
             </button>
-            {/* Can add more tools here (Rect, etc.) */}
+
+            <div className="w-px h-5 bg-neutral-800 mx-1" />
+
+            <button
+              onClick={toggleOsnap}
+              className={`p-1.5 rounded transition-colors ${
+                osnapEnabled
+                  ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Object Snap [F3]"
+            >
+              <Magnet size={18} />
+            </button>
           </div>
         </div>
 
