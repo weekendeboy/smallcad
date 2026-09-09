@@ -1,12 +1,20 @@
 import { CADDocument, CADEntity2D, Constraint, SketchFeature } from '../types/cad';
 import { solveConstraints, analyzeSketchDOF } from '../core/solver/ConstraintSolver';
+import { findClosedProfiles } from '../core/2d/TopologyEngine';
 
 export function applyConstraintsToSketch(sketch: SketchFeature): SketchFeature {
   const solverResult = solveConstraints(sketch.entities, sketch.constraints);
   const dofState = analyzeSketchDOF(solverResult.entities, sketch.constraints);
+  const profiles = findClosedProfiles(solverResult.entities);
+
   return {
     ...sketch,
-    entities: solverResult.entities,
+    entities: solverResult.entities.map((e) => ({
+      ...e,
+      state: dofState.entityStates[e.id] || 'UnderDefined',
+    })),
+    constraints: sketch.constraints,
+    profiles: profiles,
     solverState: dofState.state,
   };
 }

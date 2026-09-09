@@ -5,12 +5,13 @@ export interface SolverResult {
   iterations: number;
   maxDisp: number;
   converged: boolean;
+  conflictEntityIds: string[];
 }
 
 export interface SketchDofState {
   totalDof: number;
   state: 'UnderDefined' | 'FullyDefined' | 'OverDefined';
-  entityStates: Record<string, 'UnderDefined' | 'FullyDefined'>;
+  entityStates: Record<string, 'UnderDefined' | 'FullyDefined' | 'OverDefined'>;
 }
 
 export const SOLVER_MAX_ITERATIONS = 50;

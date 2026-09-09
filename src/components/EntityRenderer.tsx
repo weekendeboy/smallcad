@@ -7,6 +7,7 @@ export interface EntityRendererProps {
   worldToScreen: (pt: Point2D) => Point2D;
   scale: number;
   solverState?: 'UnderDefined' | 'FullyDefined' | 'OverDefined';
+  onSelectEntity?: (id: string, e: React.MouseEvent) => void;
 }
 
 export const EntityRenderer: React.FC<EntityRendererProps> = ({
@@ -15,33 +16,34 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
   worldToScreen,
   scale,
   solverState = 'UnderDefined',
+  onSelectEntity,
 }) => {
   const renderEntity = (entity: CADEntity2D) => {
     // 處理不可見的圖元
     if (entity.visible === false) return null;
 
     const isSelected = selectedIds.includes(entity.id);
+    const entityState = (entity as any).state || solverState;
 
-    // 圖元顏色判定規則：
-    // 被選取中（isSelected）：高亮為亮青色 #38bdf8，粗線 3px
-    // 未選取時：
-    //   若草圖為 FullyDefined：圖元呈現白色 #f8fafc
-    //   若草圖為 OverDefined：圖元呈現警告紅色 #ef4444
-    //   若草圖為 UnderDefined：圖元呈現 CAD 經典天藍色 #60a5fa
+    // 圖元顏色與線寬判定規則：
+    // 若為 OverDefined：無論是否選取，線條均呈現警示紅色 #ef4444（加粗 2.5px）
+    // 若為選取狀態（且非過定義）：呈現亮青色 #38bdf8，粗線 3px
+    // 若為 FullyDefined：呈現白色 #f8fafc
+    // 若為 UnderDefined：呈現經典天藍色 #60a5fa
     let strokeColor = '#60a5fa';
-    if (isSelected) {
-      strokeColor = '#38bdf8';
-    } else {
-      if (solverState === 'FullyDefined') {
-        strokeColor = '#f8fafc';
-      } else if (solverState === 'OverDefined') {
-        strokeColor = '#ef4444';
-      } else {
-        strokeColor = '#60a5fa';
-      }
-    }
+    let strokeWidth = entity.lineWidth || 1.5;
 
-    const strokeWidth = isSelected ? 3 : (entity.lineWidth || 1.5);
+    if (entityState === 'OverDefined') {
+      strokeColor = '#ef4444';
+      strokeWidth = 2.5;
+    } else if (isSelected) {
+      strokeColor = '#38bdf8';
+      strokeWidth = 3;
+    } else if (entityState === 'FullyDefined') {
+      strokeColor = '#f8fafc';
+    } else {
+      strokeColor = '#60a5fa';
+    }
 
     const commonProps = {
       stroke: strokeColor,
@@ -49,6 +51,12 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
       fill: 'none',
       style: { cursor: 'pointer' },
       className: `cad-entity cad-entity-${entity.type}`,
+      onClick: (e: React.MouseEvent) => {
+        e.stopPropagation(); // 阻止事件冒泡到底層畫布避免觸發繪圖取點
+        if (onSelectEntity) {
+          onSelectEntity(entity.id, e);
+        }
+      },
     };
 
     switch (entity.type) {

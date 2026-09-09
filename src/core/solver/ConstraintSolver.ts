@@ -1,5 +1,7 @@
-import { CADEntity2D, Constraint, LineEntity, CircleEntity, ArcEntity, PolylineEntity, Point2D } from '../../types/cad';
+import { CADEntity2D, Constraint, Point2D } from '../../types/cad';
 import { SolverResult, SketchDofState, SOLVER_MAX_ITERATIONS, SOLVER_TOLERANCE } from './solverTypes';
+
+export type { SolverResult, SketchDofState };
 
 /**
  * Deep clones a CADEntity2D to ensure immutable operations.
@@ -66,6 +68,39 @@ function setEntityPoint(entity: CADEntity2D, pointIndex: number, newPoint: Point
       entity.points[pointIndex] = { ...newPoint };
     }
   }
+}
+
+/**
+ * Finds all line entity IDs that simultaneously have both horizontal and vertical constraints.
+ */
+function findConflictingLineEntityIds(entities: CADEntity2D[], constraints: Constraint[]): string[] {
+  const lineIds = new Set(entities.filter((e) => e.type === 'line').map((e) => e.id));
+  const horizontalEntities = new Set<string>();
+  const verticalEntities = new Set<string>();
+
+  for (const c of constraints) {
+    if (c.type === 'horizontal') {
+      for (const id of c.entityIds) {
+        if (lineIds.has(id)) {
+          horizontalEntities.add(id);
+        }
+      }
+    } else if (c.type === 'vertical') {
+      for (const id of c.entityIds) {
+        if (lineIds.has(id)) {
+          verticalEntities.add(id);
+        }
+      }
+    }
+  }
+
+  const conflictIds: string[] = [];
+  for (const id of lineIds) {
+    if (horizontalEntities.has(id) && verticalEntities.has(id)) {
+      conflictIds.push(id);
+    }
+  }
+  return conflictIds;
 }
 
 /**
@@ -297,7 +332,7 @@ function applyConstraint(entitiesMap: Map<string, CADEntity2D>, constraint: Cons
 
 /**
  * Solves geometric constraints using relaxation loop.
- * Pure function returning new solved entities and convergence metrics.
+ * Pure function returning new solved entities, conflict entities, and convergence metrics.
  */
 export function solveConstraints(
   entities: CADEntity2D[],
@@ -309,6 +344,18 @@ export function solveConstraints(
     entitiesMap.set(entity.id, entity);
   }
 
+  // 1. 約束衝突 / 過定義檢查
+  const conflictEntityIds = findConflictingLineEntityIds(clonedEntities, constraints);
+  const conflictSet = new Set(conflictEntityIds);
+
+  // 若發生衝突，過濾衝突圖元的 horizontal 與 vertical 約束，避免起終點被平均成一個點而退化
+  const activeConstraints = constraints.filter((c) => {
+    if (c.type === 'horizontal' || c.type === 'vertical') {
+      return !c.entityIds.some((id) => conflictSet.has(id));
+    }
+    return true;
+  });
+
   let totalIterations = 0;
   let lastMaxDisp = 0;
   let converged = false;
@@ -317,7 +364,7 @@ export function solveConstraints(
     totalIterations = iter + 1;
     let iterationMaxDisp = 0;
 
-    for (const constraint of constraints) {
+    for (const constraint of activeConstraints) {
       const disp = applyConstraint(entitiesMap, constraint);
       if (disp > iterationMaxDisp) {
         iterationMaxDisp = disp;
@@ -332,11 +379,17 @@ export function solveConstraints(
     }
   }
 
+  // 若存在約束衝突，標記為未收斂
+  if (conflictEntityIds.length > 0) {
+    converged = false;
+  }
+
   return {
     entities: clonedEntities,
     iterations: totalIterations,
     maxDisp: lastMaxDisp,
     converged,
+    conflictEntityIds,
   };
 }
 
@@ -410,24 +463,34 @@ export function analyzeSketchDOF(
     }
   }
 
+  const conflictEntityIds = findConflictingLineEntityIds(entities, constraints);
+  const conflictSet = new Set(conflictEntityIds);
+
   const totalDof = initialDof - dofReduction;
 
   let state: 'UnderDefined' | 'FullyDefined' | 'OverDefined';
-  if (totalDof > 0) {
-    state = 'UnderDefined';
+  if (conflictSet.size > 0 || totalDof < 0) {
+    state = 'OverDefined';
   } else if (totalDof === 0) {
     state = 'FullyDefined';
   } else {
-    state = 'OverDefined';
+    state = 'UnderDefined';
   }
 
-  const entityStates: Record<string, 'UnderDefined' | 'FullyDefined'> = {};
+  const entityStates: Record<string, 'UnderDefined' | 'FullyDefined' | 'OverDefined'> = {};
   for (const entity of entities) {
+    if (conflictSet.has(entity.id)) {
+      entityStates[entity.id] = 'OverDefined';
+      continue;
+    }
+
     const initD = entityInitialDof[entity.id] ?? 0;
     const redD = entityDofReductions[entity.id] ?? 0;
     const remaining = initD - redD;
 
-    if (state === 'FullyDefined' || state === 'OverDefined' || remaining <= 0) {
+    if (remaining < 0) {
+      entityStates[entity.id] = 'OverDefined';
+    } else if (remaining === 0) {
       entityStates[entity.id] = 'FullyDefined';
     } else {
       entityStates[entity.id] = 'UnderDefined';

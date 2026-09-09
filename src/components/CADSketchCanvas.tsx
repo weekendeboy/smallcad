@@ -3,6 +3,7 @@ import { useCADStore } from '../store/cadStore';
 import { useViewport } from '../hooks/useViewport';
 import { CADGrid } from './CADGrid';
 import { EntityRenderer } from './EntityRenderer';
+import { ProfileRenderer } from './ProfileRenderer';
 import { Point2D, SketchFeature } from '../types/cad';
 import { useDrawMachine } from '../hooks/useDrawMachine';
 import { RubberbandPreview } from './RubberbandPreview';
@@ -13,7 +14,27 @@ export const CADSketchCanvas: React.FC = () => {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [mouseWorldPos, setMouseWorldPos] = useState<Point2D>({ x: 0, y: 0 });
 
-  const { currentTool, activeSketchId, document, selectedEntityIds, osnapEnabled } = useCADStore();
+  const {
+    currentTool,
+    activeSketchId,
+    document,
+    selectedEntityIds,
+    osnapEnabled,
+    selectEntity,
+    clearSelection,
+  } = useCADStore();
+
+  const handleSelectEntity = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      if (currentTool === 'SELECT') {
+        if (!e.shiftKey) {
+          clearSelection();
+        }
+        selectEntity(id);
+      }
+    },
+    [currentTool, clearSelection, selectEntity]
+  );
 
   const {
     drawSession,
@@ -85,8 +106,9 @@ export const CADSketchCanvas: React.FC = () => {
     [viewportHandlers, screenToWorld, handleCanvasClick]
   );
 
-  // 取得目前草圖內的 entities 與 solverState
+  // 取得目前草圖內的 entities, profiles 與 solverState
   let currentEntities: any[] = [];
+  let currentProfiles: any[] = [];
   let currentSolverState: any = 'UnderDefined';
   if (activeSketchId) {
     const sketch = document.featureTree.find(
@@ -94,6 +116,7 @@ export const CADSketchCanvas: React.FC = () => {
     ) as SketchFeature | undefined;
     if (sketch) {
       currentEntities = sketch.entities;
+      currentProfiles = sketch.profiles || [];
       currentSolverState = sketch.solverState;
     }
   }
@@ -132,6 +155,11 @@ export const CADSketchCanvas: React.FC = () => {
           height={dimensions.height}
           style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
         >
+          {/* 封閉面渲染層 (置於線條與節點下方) */}
+          <ProfileRenderer
+            profiles={currentProfiles}
+            worldToScreen={worldToScreen}
+          />
           <g style={{ pointerEvents: 'all' }}>
             <EntityRenderer
               entities={currentEntities}
@@ -139,6 +167,7 @@ export const CADSketchCanvas: React.FC = () => {
               worldToScreen={worldToScreen}
               scale={scale}
               solverState={currentSolverState}
+              onSelectEntity={handleSelectEntity}
             />
           </g>
           {/* 疊加繪圖預覽層 */}
