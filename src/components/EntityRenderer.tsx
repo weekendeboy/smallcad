@@ -25,7 +25,6 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
     const strokeWidth = isSelected ? 3 : (entity.lineWidth || 1.5);
 
     const commonProps = {
-      key: entity.id,
       stroke: strokeColor,
       strokeWidth,
       fill: 'none',
@@ -39,6 +38,7 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
         const end = worldToScreen(entity.end);
         return (
           <line
+            key={entity.id}
             x1={start.x}
             y1={start.y}
             x2={end.x}
@@ -52,6 +52,7 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
         const center = worldToScreen(entity.center);
         return (
           <circle
+            key={entity.id}
             cx={center.x}
             cy={center.y}
             r={entity.radius * scale}
@@ -91,7 +92,7 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
         
         const pathData = `M ${start.x} ${start.y} A ${screenRadius} ${screenRadius} 0 ${largeArcFlag} ${sweepFlag} ${end.x} ${end.y}`;
         
-        return <path d={pathData} {...commonProps} />;
+        return <path key={entity.id} d={pathData} {...commonProps} />;
       }
       
       case 'polyline': {
@@ -103,9 +104,9 @@ export const EntityRenderer: React.FC<EntityRendererProps> = ({
           .join(' ');
         
         if (entity.closed) {
-          return <polygon points={pointsStr} {...commonProps} />;
+          return <polygon key={entity.id} points={pointsStr} {...commonProps} />;
         }
-        return <polyline points={pointsStr} {...commonProps} />;
+        return <polyline key={entity.id} points={pointsStr} {...commonProps} />;
       }
       
       default:

@@ -7,7 +7,7 @@ import React from 'react';
 import { useCADStore } from './store/cadStore';
 import { useCadShortcuts } from './hooks/useCadShortcuts';
 import { CADSketchCanvas } from './components/CADSketchCanvas';
-import { MousePointer2, Pencil, Undo2, Redo2, Maximize } from 'lucide-react';
+import { MousePointer2, Pencil, Undo2, Redo2, Maximize, Circle } from 'lucide-react';
 
 export default function App() {
   // 啟用全域快速鍵
@@ -50,7 +50,16 @@ export default function App() {
             >
               <Pencil size={18} />
             </button>
-            {/* Can add more tools here (Circle, Rect, etc.) */}
+            <button
+              onClick={() => setTool('CIRCLE')}
+              className={`p-1.5 rounded ${
+                currentTool === 'CIRCLE' ? 'bg-neutral-800 text-blue-400' : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Circle (C)"
+            >
+              <Circle size={18} />
+            </button>
+            {/* Can add more tools here (Rect, etc.) */}
           </div>
         </div>
 
