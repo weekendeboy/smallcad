@@ -1,4 +1,4 @@
-import { CADDocument, CADEntity2D } from '../types/cad';
+import { CADDocument, CADEntity2D, Constraint } from '../types/cad';
 
 export interface CADState {
   document: CADDocument;
@@ -21,6 +21,8 @@ export interface CADState {
   addEntity: (entity: CADEntity2D) => void;
   removeEntity: (id: string) => void;
   updateEntity: (id: string, updates: Partial<CADEntity2D>) => void;
+  addConstraint: (constraint: Constraint) => void;
+  removeConstraint: (constraintId: string) => void;
   toggleOsnap: () => void;
   resetDocument: () => void;
   undo: () => void;

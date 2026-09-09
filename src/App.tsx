@@ -7,7 +7,18 @@ import React from 'react';
 import { useCADStore } from './store/cadStore';
 import { useCadShortcuts } from './hooks/useCadShortcuts';
 import { CADSketchCanvas } from './components/CADSketchCanvas';
-import { MousePointer2, Pencil, Undo2, Redo2, Maximize, Circle, Magnet } from 'lucide-react';
+import { SketchFeature } from './types/cad';
+import {
+  MousePointer2,
+  Pencil,
+  Undo2,
+  Redo2,
+  Maximize,
+  Circle,
+  Magnet,
+  MoveHorizontal,
+  MoveVertical,
+} from 'lucide-react';
 
 export default function App() {
   // 啟用全域快速鍵
@@ -23,7 +34,38 @@ export default function App() {
     canRedo,
     osnapEnabled,
     toggleOsnap,
+    document,
+    activeSketchId,
+    selectedEntityIds,
+    addConstraint,
   } = useCADStore();
+
+  // 取得當前草圖與求解器狀態
+  const activeSketch = document.featureTree.find(
+    (f) => f.id === activeSketchId && f.type === 'SKETCH'
+  ) as SketchFeature | undefined;
+
+  const solverState = activeSketch?.solverState || 'UnderDefined';
+  const hasSelectedEntity = selectedEntityIds.length === 1;
+  const selectedId = selectedEntityIds[0];
+
+  const handleAddHorizontal = () => {
+    if (!selectedId) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'horizontal',
+      entityIds: [selectedId],
+    });
+  };
+
+  const handleAddVertical = () => {
+    if (!selectedId) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'vertical',
+      entityIds: [selectedId],
+    });
+  };
 
   return (
     <div className="w-full h-screen flex flex-col bg-neutral-900 text-white overflow-hidden">
@@ -31,13 +73,15 @@ export default function App() {
       <header className="h-14 border-b border-neutral-800 bg-neutral-950 flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-2">
           <div className="font-bold text-lg mr-4">AI Studio CAD</div>
-          
+
           {/* Tools */}
           <div className="flex bg-neutral-900 p-1 rounded-md border border-neutral-800 items-center gap-0.5">
             <button
               onClick={() => setTool('SELECT')}
               className={`p-1.5 rounded ${
-                currentTool === 'SELECT' ? 'bg-neutral-800 text-blue-400' : 'text-neutral-400 hover:text-white'
+                currentTool === 'SELECT'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
               }`}
               title="Select (S)"
             >
@@ -46,7 +90,9 @@ export default function App() {
             <button
               onClick={() => setTool('LINE')}
               className={`p-1.5 rounded ${
-                currentTool === 'LINE' ? 'bg-neutral-800 text-blue-400' : 'text-neutral-400 hover:text-white'
+                currentTool === 'LINE'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
               }`}
               title="Line (L)"
             >
@@ -55,7 +101,9 @@ export default function App() {
             <button
               onClick={() => setTool('CIRCLE')}
               className={`p-1.5 rounded ${
-                currentTool === 'CIRCLE' ? 'bg-neutral-800 text-blue-400' : 'text-neutral-400 hover:text-white'
+                currentTool === 'CIRCLE'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
               }`}
               title="Circle (C)"
             >
@@ -75,6 +123,27 @@ export default function App() {
             >
               <Magnet size={18} />
             </button>
+
+            {/* Constraints toolbar (appears when 1 entity is selected) */}
+            {hasSelectedEntity && (
+              <>
+                <div className="w-px h-5 bg-neutral-800 mx-1" />
+                <button
+                  onClick={handleAddHorizontal}
+                  className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                  title="Add Horizontal Constraint"
+                >
+                  <MoveHorizontal size={18} />
+                </button>
+                <button
+                  onClick={handleAddVertical}
+                  className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                  title="Add Vertical Constraint"
+                >
+                  <MoveVertical size={18} />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -99,6 +168,19 @@ export default function App() {
           </div>
 
           <div className="h-6 w-px bg-neutral-800 mx-1"></div>
+
+          {/* Solver State Badge */}
+          <div
+            className={`px-2.5 py-1 rounded text-xs font-semibold tracking-wider border ${
+              solverState === 'FullyDefined'
+                ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/50'
+                : solverState === 'OverDefined'
+                ? 'bg-red-950/80 text-red-400 border-red-800/50'
+                : 'bg-blue-950/80 text-blue-400 border-blue-800/50'
+            }`}
+          >
+            [{solverState}]
+          </div>
 
           <div className="flex items-center bg-neutral-900 px-3 py-1 rounded text-sm font-mono border border-neutral-800 text-neutral-300">
             <Maximize size={14} className="mr-2" />

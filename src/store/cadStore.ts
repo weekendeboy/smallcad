@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { CADState } from './cadStore.types';
 import { CADEntity2D, createEmptyCADDocument, DatumFrontPlane, SketchFeature } from '../types/cad';
-import { insertEntityIntoSketch, removeEntityFromSketch, updateEntityInSketch } from './sketchMutators';
+import {
+  insertEntityIntoSketch,
+  removeEntityFromSketch,
+  updateEntityInSketch,
+  addConstraintToSketch,
+  removeConstraintFromSketch,
+} from './sketchMutators';
 
 function createInitialDocument() {
   const doc = createEmptyCADDocument();
@@ -99,6 +105,22 @@ export const useCADStore = create<CADState>((set, get) => ({
     return {
       ...pushUndoState(state),
       document: updateEntityInSketch(state.document, state.activeSketchId, updatedEntity)
+    };
+  }),
+
+  addConstraint: (constraint) => set((state) => {
+    if (!state.activeSketchId) return state;
+    return {
+      ...pushUndoState(state),
+      document: addConstraintToSketch(state.document, state.activeSketchId, constraint),
+    };
+  }),
+
+  removeConstraint: (constraintId) => set((state) => {
+    if (!state.activeSketchId) return state;
+    return {
+      ...pushUndoState(state),
+      document: removeConstraintFromSketch(state.document, state.activeSketchId, constraintId),
     };
   }),
 

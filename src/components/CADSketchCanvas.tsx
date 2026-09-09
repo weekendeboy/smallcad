@@ -85,14 +85,16 @@ export const CADSketchCanvas: React.FC = () => {
     [viewportHandlers, screenToWorld, handleCanvasClick]
   );
 
-  // 取得目前草圖內的 entities
+  // 取得目前草圖內的 entities 與 solverState
   let currentEntities: any[] = [];
+  let currentSolverState: any = 'UnderDefined';
   if (activeSketchId) {
     const sketch = document.featureTree.find(
       (f) => f.id === activeSketchId && f.type === 'SKETCH'
     ) as SketchFeature | undefined;
     if (sketch) {
       currentEntities = sketch.entities;
+      currentSolverState = sketch.solverState;
     }
   }
 
@@ -136,6 +138,7 @@ export const CADSketchCanvas: React.FC = () => {
               selectedIds={selectedEntityIds}
               worldToScreen={worldToScreen}
               scale={scale}
+              solverState={currentSolverState}
             />
           </g>
           {/* 疊加繪圖預覽層 */}

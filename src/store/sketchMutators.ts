@@ -1,14 +1,26 @@
-import { CADDocument, CADEntity2D, SketchFeature } from '../types/cad';
+import { CADDocument, CADEntity2D, Constraint, SketchFeature } from '../types/cad';
+import { solveConstraints, analyzeSketchDOF } from '../core/solver/ConstraintSolver';
+
+export function applyConstraintsToSketch(sketch: SketchFeature): SketchFeature {
+  const solverResult = solveConstraints(sketch.entities, sketch.constraints);
+  const dofState = analyzeSketchDOF(solverResult.entities, sketch.constraints);
+  return {
+    ...sketch,
+    entities: solverResult.entities,
+    solverState: dofState.state,
+  };
+}
 
 export function insertEntityIntoSketch(doc: CADDocument, sketchId: string, entity: CADEntity2D): CADDocument {
   return {
     ...doc,
     featureTree: doc.featureTree.map((feature) => {
       if (feature.id === sketchId && feature.type === 'SKETCH') {
-        return {
+        const updatedSketch: SketchFeature = {
           ...feature,
           entities: [...feature.entities, entity],
         };
+        return applyConstraintsToSketch(updatedSketch);
       }
       return feature;
     }),
@@ -27,7 +39,7 @@ export function removeEntityFromSketch(doc: CADDocument, sketchId: string, entit
             .map((c) => c.id)
         );
 
-        return {
+        const updatedSketch: SketchFeature = {
           ...feature,
           entities: feature.entities.filter((e) => e.id !== entityId),
           // Remove the associated constraints
@@ -37,6 +49,7 @@ export function removeEntityFromSketch(doc: CADDocument, sketchId: string, entit
             (d) => !d.constraintId || !constraintsToRemove.has(d.constraintId)
           ),
         };
+        return applyConstraintsToSketch(updatedSketch);
       }
       return feature;
     }),
@@ -48,10 +61,43 @@ export function updateEntityInSketch(doc: CADDocument, sketchId: string, entity:
     ...doc,
     featureTree: doc.featureTree.map((feature) => {
       if (feature.id === sketchId && feature.type === 'SKETCH') {
-        return {
+        const updatedSketch: SketchFeature = {
           ...feature,
           entities: feature.entities.map((e) => (e.id === entity.id ? entity : e)),
         };
+        return applyConstraintsToSketch(updatedSketch);
+      }
+      return feature;
+    }),
+  };
+}
+
+export function addConstraintToSketch(doc: CADDocument, sketchId: string, constraint: Constraint): CADDocument {
+  return {
+    ...doc,
+    featureTree: doc.featureTree.map((feature) => {
+      if (feature.id === sketchId && feature.type === 'SKETCH') {
+        const updatedSketch: SketchFeature = {
+          ...feature,
+          constraints: [...feature.constraints, constraint],
+        };
+        return applyConstraintsToSketch(updatedSketch);
+      }
+      return feature;
+    }),
+  };
+}
+
+export function removeConstraintFromSketch(doc: CADDocument, sketchId: string, constraintId: string): CADDocument {
+  return {
+    ...doc,
+    featureTree: doc.featureTree.map((feature) => {
+      if (feature.id === sketchId && feature.type === 'SKETCH') {
+        const updatedSketch: SketchFeature = {
+          ...feature,
+          constraints: feature.constraints.filter((c) => c.id !== constraintId),
+        };
+        return applyConstraintsToSketch(updatedSketch);
       }
       return feature;
     }),

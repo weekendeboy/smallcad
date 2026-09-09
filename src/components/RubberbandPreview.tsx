@@ -68,7 +68,7 @@ export const RubberbandPreview: React.FC<RubberbandPreviewProps> = ({
     const allPoints = [...basePoints, session.currentCursor];
     const pointsString = allPoints
       .map(worldToScreen)
-      .map((p) => `${p.x},${p.y}`)
+      .map((p: Point2D) => `${p.x},${p.y}`)
       .join(' ');
 
     return (
