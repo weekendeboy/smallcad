@@ -256,6 +256,7 @@ export function useDrawMachine() {
 
   const [drawSession, setDrawSession] = useState<DrawSession>(createInitialDrawSession());
   const [currentSnap, setCurrentSnap] = useState<SnapResult | null>(null);
+  const [startSnap, setStartSnap] = useState<SnapResult | null>(null);
   const [trimPreviewEntity, setTrimPreviewEntity] = useState<CADEntity2D | null>(null);
   const [firstEntityId, setFirstEntityId] = useState<string | null>(null);
   const [lastEntityId, setLastEntityId] = useState<string | null>(null);
@@ -293,6 +294,7 @@ export function useDrawMachine() {
     setDimSnap2(null);
     setDimSelectedLineId(null);
     setDimSelectedCircleOrArc(null);
+    setStartSnap(null);
   }, []);
 
   // 當工具切換時，將 lastEntityId 與 firstEntityId 徹底重置，並取消繪圖操作
@@ -395,6 +397,7 @@ export function useDrawMachine() {
             currentCursor: clickPt,
             step: 1,
           });
+          setStartSnap(currentSnap);
         } else if (drawSession.startPoint) {
           let actualEndPt = clickPt;
           if (drawSession.inferredConstraint === 'horizontal') {
@@ -425,6 +428,26 @@ export function useDrawMachine() {
                 id: crypto.randomUUID(),
                 type: drawSession.inferredConstraint,
                 entityIds: [newLine.id],
+              });
+            }
+
+            // 檢查起點：若 startSnap 存在且其 entityId !== newLine.id，自動建立重合約束
+            if (startSnap && startSnap.entityId !== newLine.id) {
+              addConstraint({
+                id: crypto.randomUUID(),
+                type: 'coincident',
+                entityIds: [newLine.id, startSnap.entityId],
+                pointIndices: [0, startSnap.pointIndex ?? 0],
+              });
+            }
+
+            // 檢查終點：若當前點擊處的 currentSnap 存在且其 entityId !== newLine.id
+            if (currentSnap && currentSnap.entityId !== newLine.id) {
+              addConstraint({
+                id: crypto.randomUUID(),
+                type: 'coincident',
+                entityIds: [newLine.id, currentSnap.entityId],
+                pointIndices: [1, currentSnap.pointIndex ?? 0],
               });
             }
 
@@ -478,6 +501,7 @@ export function useDrawMachine() {
             step: 1,
             inferredConstraint: null,
           });
+          setStartSnap(currentSnap);
         }
       } else if (currentTool === 'CIRCLE') {
         if (!drawSession.isDrawing) {
@@ -998,6 +1022,7 @@ export function useDrawMachine() {
       dimSelectedLineId,
       dimSelectedCircleOrArc,
       addDimension,
+      startSnap,
     ]
   );
 

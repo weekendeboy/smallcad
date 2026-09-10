@@ -94,12 +94,15 @@ function setEntityPoint(entity: CADEntity2D, pointIndex: number, newPoint: Point
 }
 
 /**
- * Finds all line entity IDs that simultaneously have both horizontal and vertical constraints.
+ * Finds all line entity IDs that simultaneously have conflicting constraints:
+ * - A single line having both horizontal and vertical constraints.
+ * - A pair of lines simultaneously having both parallel and perpendicular constraints.
  */
 function findConflictingLineEntityIds(entities: CADEntity2D[], constraints: Constraint[]): string[] {
   const lineIds = new Set(entities.filter((e) => e.type === 'line').map((e) => e.id));
   const horizontalEntities = new Set<string>();
   const verticalEntities = new Set<string>();
+  const pairConstraintsMap = new Map<string, Set<string>>();
 
   for (const c of constraints) {
     if (c.type === 'horizontal') {
@@ -114,16 +117,40 @@ function findConflictingLineEntityIds(entities: CADEntity2D[], constraints: Cons
           verticalEntities.add(id);
         }
       }
+    } else if (c.type === 'parallel' || c.type === 'perpendicular') {
+      if (c.entityIds.length >= 2) {
+        const id1 = c.entityIds[0];
+        const id2 = c.entityIds[1];
+        if (lineIds.has(id1) && lineIds.has(id2)) {
+          const pairKey = id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
+          if (!pairConstraintsMap.has(pairKey)) {
+            pairConstraintsMap.set(pairKey, new Set<string>());
+          }
+          pairConstraintsMap.get(pairKey)!.add(c.type);
+        }
+      }
     }
   }
 
-  const conflictIds: string[] = [];
+  const conflictSet = new Set<string>();
+
+  // Single line conflicting: both horizontal and vertical
   for (const id of lineIds) {
     if (horizontalEntities.has(id) && verticalEntities.has(id)) {
-      conflictIds.push(id);
+      conflictSet.add(id);
     }
   }
-  return conflictIds;
+
+  // Pair of lines conflicting: both parallel and perpendicular
+  for (const [pairKey, types] of pairConstraintsMap.entries()) {
+    if (types.has('parallel') && types.has('perpendicular')) {
+      const [id1, id2] = pairKey.split('_');
+      conflictSet.add(id1);
+      conflictSet.add(id2);
+    }
+  }
+
+  return Array.from(conflictSet);
 }
 
 /**
@@ -143,7 +170,8 @@ function isPointFixed(
 function applyConstraint(
   entitiesMap: Map<string, CADEntity2D>,
   constraint: Constraint,
-  fixedPositionsMap: Map<string, Point2D>
+  fixedPositionsMap: Map<string, Point2D>,
+  allConstraints?: Constraint[]
 ): number {
   let maxDisp = 0;
 
@@ -569,58 +597,165 @@ function applyConstraint(
           const L = Math.hypot(dx, dy);
           if (L < 1e-7) break;
 
-          const tx = dx / L;
-          const ty = dy / L;
-          const ux = C.x - P1.x;
-          const uy = C.y - P1.y;
-          const proj = ux * tx + uy * ty;
+          // 1. Check if there is a coincident endpoint constraint/overlap between the line and the circle/arc
+          let isEndPointTangent = false;
+          let sharedPtLineIdx: number | null = null;
+          let sharedPt: Point2D | null = null;
 
-          const projX = P1.x + proj * tx;
-          const projY = P1.y + proj * ty;
+          // Check A: Search allConstraints for a coincident constraint containing both lineId and circleId
+          const connConstraint = allConstraints?.find(c => 
+            c.type === 'coincident' && 
+            c.entityIds.includes(lineId) && 
+            c.entityIds.includes(circleId)
+          );
 
-          const px = C.x - projX;
-          const py = C.y - projY;
-          const d = Math.hypot(px, py);
-
-          let nx = 0;
-          let ny = 0;
-          if (d >= 1e-7) {
-            nx = px / d;
-            ny = py / d;
-          } else {
-            nx = -ty;
-            ny = tx;
+          if (connConstraint && connConstraint.pointIndices && connConstraint.pointIndices.length >= 2) {
+            const idxLineInConstraint = connConstraint.entityIds.indexOf(lineId);
+            if (idxLineInConstraint !== -1) {
+              sharedPtLineIdx = connConstraint.pointIndices[idxLineInConstraint];
+              sharedPt = getEntityPoint(lineEntity, sharedPtLineIdx);
+              if (sharedPt) {
+                isEndPointTangent = true;
+              }
+            }
           }
 
-          const delta = d - R;
-          if (Math.abs(delta) > 1e-7) {
-            const isCenterFixed = circleEntity.type === 'circle'
-              ? (isPointFixed(fixedPositionsMap, circleId, 0) || isPointFixed(fixedPositionsMap, circleId, 1) || isPointFixed(fixedPositionsMap, circleId, 2))
-              : isPointFixed(fixedPositionsMap, circleId, 2);
+          // Check B: Or directly check geometric endpoints within 1e-4 tolerance
+          if (!isEndPointTangent && circleEntity.type === 'arc') {
+            const arcP0 = getEntityPoint(circleEntity, 0); // start of arc
+            const arcP1 = getEntityPoint(circleEntity, 1); // end of arc
+            
+            const lineP0 = P1;
+            const lineP1 = P2;
 
-            const isLineFixed = isPointFixed(fixedPositionsMap, lineId, 0) || isPointFixed(fixedPositionsMap, lineId, 1);
+            if (arcP0 && arcP1) {
+              const d00 = Math.hypot(lineP0.x - arcP0.x, lineP0.y - arcP0.y);
+              const d01 = Math.hypot(lineP0.x - arcP1.x, lineP0.y - arcP1.y);
+              const d10 = Math.hypot(lineP1.x - arcP0.x, lineP1.y - arcP0.y);
+              const d11 = Math.hypot(lineP1.x - arcP1.x, lineP1.y - arcP1.y);
 
-            if (isCenterFixed && !isLineFixed) {
-              const disp = Math.abs(delta);
-              lineEntity.start.x += delta * nx;
-              lineEntity.start.y += delta * ny;
-              lineEntity.end.x += delta * nx;
-              lineEntity.end.y += delta * ny;
+              if (d00 < 1e-4) {
+                isEndPointTangent = true;
+                sharedPtLineIdx = 0;
+                sharedPt = lineP0;
+              } else if (d01 < 1e-4) {
+                isEndPointTangent = true;
+                sharedPtLineIdx = 0;
+                sharedPt = lineP0;
+              } else if (d10 < 1e-4) {
+                isEndPointTangent = true;
+                sharedPtLineIdx = 1;
+                sharedPt = lineP1;
+              } else if (d11 < 1e-4) {
+                isEndPointTangent = true;
+                sharedPtLineIdx = 1;
+                sharedPt = lineP1;
+              }
+            }
+          }
+
+          if (isEndPointTangent && sharedPt && sharedPtLineIdx !== null) {
+            // Branch A: End-point Tangent (Most common case)
+            // Keep the shared connection point motionless to satisfy the coincident constraint
+            const Pshared = { ...sharedPt };
+            const isStartShared = sharedPtLineIdx === 0;
+            const Pfree = isStartShared ? { ...P2 } : { ...P1 };
+
+            // Calculate the radial vector from circle center to the shared endpoint
+            const rx = Pshared.x - C.x;
+            const ry = Pshared.y - C.y;
+            const rLen = Math.hypot(rx, ry);
+
+            if (rLen > 1e-7) {
+              // Target tangent vectors (perpendicular to radial vector)
+              const T1x = -ry / rLen;
+              const T1y = rx / rLen;
+              const T2x = ry / rLen;
+              const T2y = -rx / rLen;
+
+              // Vector from shared endpoint to free endpoint
+              const VfreeX = Pfree.x - Pshared.x;
+              const VfreeY = Pfree.y - Pshared.y;
+
+              // Choose the direction of tangent closest to the current free endpoint (positive dot product)
+              const dot1 = T1x * VfreeX + T1y * VfreeY;
+              const dot2 = T2x * VfreeX + T2y * VfreeY;
+
+              const Tx = dot1 > dot2 ? T1x : T2x;
+              const Ty = dot1 > dot2 ? T1y : T2y;
+
+              // Maintain original line length L and rotate free endpoint
+              const newPfreeX = Pshared.x + Tx * L;
+              const newPfreeY = Pshared.y + Ty * L;
+
+              const disp = Math.hypot(newPfreeX - Pfree.x, newPfreeY - Pfree.y);
+
+              // Update only the free endpoint of the line, leaving the coincident endpoint pristine
+              if (isStartShared) {
+                lineEntity.end.x = newPfreeX;
+                lineEntity.end.y = newPfreeY;
+              } else {
+                lineEntity.start.x = newPfreeX;
+                lineEntity.start.y = newPfreeY;
+              }
+
               maxDisp = disp;
-            } else if (isLineFixed && !isCenterFixed) {
-              const disp = Math.abs(delta);
-              circleEntity.center.x -= delta * nx;
-              circleEntity.center.y -= delta * ny;
-              maxDisp = disp;
-            } else if (!isCenterFixed && !isLineFixed) {
-              const disp = Math.abs(delta) * 0.5;
-              lineEntity.start.x += 0.5 * delta * nx;
-              lineEntity.start.y += 0.5 * delta * ny;
-              lineEntity.end.x += 0.5 * delta * nx;
-              lineEntity.end.y += 0.5 * delta * ny;
-              circleEntity.center.x -= 0.5 * delta * nx;
-              circleEntity.center.y -= 0.5 * delta * ny;
-              maxDisp = disp;
+            }
+          } else {
+            // Branch B: Ordinary line body tangent (Translational displacement correction)
+            const tx = dx / L;
+            const ty = dy / L;
+            const ux = C.x - P1.x;
+            const uy = C.y - P1.y;
+            const proj = ux * tx + uy * ty;
+
+            const projX = P1.x + proj * tx;
+            const projY = P1.y + proj * ty;
+
+            const px = C.x - projX;
+            const py = C.y - projY;
+            const d = Math.hypot(px, py);
+
+            let nx = 0;
+            let ny = 0;
+            if (d >= 1e-7) {
+              nx = px / d;
+              ny = py / d;
+            } else {
+              nx = -ty;
+              ny = tx;
+            }
+
+            const delta = d - R;
+            if (Math.abs(delta) > 1e-7) {
+              const isCenterFixed = circleEntity.type === 'circle'
+                ? (isPointFixed(fixedPositionsMap, circleId, 0) || isPointFixed(fixedPositionsMap, circleId, 1) || isPointFixed(fixedPositionsMap, circleId, 2))
+                : isPointFixed(fixedPositionsMap, circleId, 2);
+
+              const isLineFixed = isPointFixed(fixedPositionsMap, lineId, 0) || isPointFixed(fixedPositionsMap, lineId, 1);
+
+              if (isCenterFixed && !isLineFixed) {
+                const disp = Math.abs(delta);
+                lineEntity.start.x += delta * nx;
+                lineEntity.start.y += delta * ny;
+                lineEntity.end.x += delta * nx;
+                lineEntity.end.y += delta * ny;
+                maxDisp = disp;
+              } else if (isLineFixed && !isCenterFixed) {
+                const disp = Math.abs(delta);
+                circleEntity.center.x -= delta * nx;
+                circleEntity.center.y -= delta * ny;
+                maxDisp = disp;
+              } else if (!isCenterFixed && !isLineFixed) {
+                const disp = Math.abs(delta) * 0.5;
+                lineEntity.start.x += 0.5 * delta * nx;
+                lineEntity.start.y += 0.5 * delta * ny;
+                lineEntity.end.x += 0.5 * delta * nx;
+                lineEntity.end.y += 0.5 * delta * ny;
+                circleEntity.center.x -= 0.5 * delta * nx;
+                circleEntity.center.y -= 0.5 * delta * ny;
+                maxDisp = disp;
+              }
             }
           }
         } else if (isCircle1 && isCircle2) {
@@ -986,9 +1121,14 @@ export function solveConstraints(
   const conflictEntityIds = findConflictingLineEntityIds(clonedEntities, constraints);
   const conflictSet = new Set(conflictEntityIds);
 
-  // 若發生衝突，過濾衝突圖元的 horizontal 與 vertical 約束，避免起終點被平均成一個點而退化
+  // 若發生衝突，過濾衝突圖元的 horizontal, vertical, parallel 與 perpendicular 約束，避免起終點被平均成一個點而退化或幾何無限角震盪退化
   const activeConstraints = constraints.filter((c) => {
-    if (c.type === 'horizontal' || c.type === 'vertical') {
+    if (
+      c.type === 'horizontal' ||
+      c.type === 'vertical' ||
+      c.type === 'parallel' ||
+      c.type === 'perpendicular'
+    ) {
       return !c.entityIds.some((id) => conflictSet.has(id));
     }
     return true;
@@ -1003,7 +1143,7 @@ export function solveConstraints(
     let iterationMaxDisp = 0;
 
     for (const constraint of activeConstraints) {
-      const disp = applyConstraint(entitiesMap, constraint, fixedPositionsMap);
+      const disp = applyConstraint(entitiesMap, constraint, fixedPositionsMap, activeConstraints);
       if (disp > iterationMaxDisp) {
         iterationMaxDisp = disp;
       }

@@ -131,7 +131,7 @@ export const ConstraintBadgeRenderer: React.FC<ConstraintBadgeRendererProps> = (
       case 'tangent': return 'tan';
       case 'parallel': return '∥';
       case 'perpendicular': return '⊥';
-      case 'coincident': return '☩';
+      case 'coincident': return '+';
       default: return '';
     }
   };
