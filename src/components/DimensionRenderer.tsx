@@ -1,5 +1,5 @@
 import React from 'react';
-import { Point2D, Dimension } from '../types/cad';
+import { Point2D, Dimension, CADEntity2D } from '../types/cad';
 import {
   calculateLinearDimensionLayout,
   calculateRadialDimensionLayout
@@ -7,12 +7,52 @@ import {
 
 interface DimensionRendererProps {
   dimensions: Dimension[];
+  entities: CADEntity2D[];
   worldToScreen: (pt: Point2D) => Point2D;
   onEditDimension: (dim: Dimension) => void;
 }
 
+function getEntityPoints(entity: CADEntity2D): Point2D[] {
+  if (entity.type === 'line') {
+    return [entity.start, entity.end];
+  } else if (entity.type === 'circle') {
+    return [entity.center];
+  } else if (entity.type === 'arc') {
+    const startAngle = entity.startAngle;
+    const endAngle = entity.endAngle;
+    const arcStart = {
+      x: entity.center.x + entity.radius * Math.cos(startAngle),
+      y: entity.center.y + entity.radius * Math.sin(startAngle),
+    };
+    const arcEnd = {
+      x: entity.center.x + entity.radius * Math.cos(endAngle),
+      y: entity.center.y + entity.radius * Math.sin(endAngle),
+    };
+    return [arcStart, arcEnd, entity.center];
+  } else if (entity.type === 'polyline') {
+    return entity.points;
+  }
+  return [];
+}
+
+function getClosestEntityPoint(entity: CADEntity2D, origPt: Point2D): Point2D {
+  const pts = getEntityPoints(entity);
+  if (pts.length === 0) return origPt;
+  let closest = pts[0];
+  let minDist = Math.hypot(pts[0].x - origPt.x, pts[0].y - origPt.y);
+  for (let i = 1; i < pts.length; i++) {
+    const dist = Math.hypot(pts[i].x - origPt.x, pts[i].y - origPt.y);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = pts[i];
+    }
+  }
+  return closest;
+}
+
 export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
   dimensions,
+  entities,
   worldToScreen,
   onEditDimension,
 }) => {
@@ -26,13 +66,44 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
         try {
           if (dim.type === 'linear') {
             if (dim.points.length < 2) return null;
-            const p1 = dim.points[0];
-            const p2 = dim.points[1];
+
+            let p1 = dim.points[0];
+            let p2 = dim.points[1];
+            let resolved = false;
+
+            if (dim.entityIds && dim.entityIds.length > 0) {
+              if (dim.entityIds.length === 1) {
+                const ent = entities.find((e) => e.id === dim.entityIds![0]);
+                if (ent && ent.type === 'line') {
+                  p1 = ent.start;
+                  p2 = ent.end;
+                  resolved = true;
+                }
+              } else if (dim.entityIds.length === 2) {
+                const ent1 = entities.find((e) => e.id === dim.entityIds![0]);
+                const ent2 = entities.find((e) => e.id === dim.entityIds![1]);
+                if (ent1 && ent2) {
+                  p1 = getClosestEntityPoint(ent1, dim.points[0]);
+                  p2 = getClosestEntityPoint(ent2, dim.points[1]);
+                  resolved = true;
+                }
+              }
+            }
+
+            let textPosition = dim.textPosition;
+            if (resolved) {
+              const dx = ((p1.x - dim.points[0].x) + (p2.x - dim.points[1].x)) / 2;
+              const dy = ((p1.y - dim.points[0].y) + (p2.y - dim.points[1].y)) / 2;
+              textPosition = {
+                x: dim.textPosition.x + dx,
+                y: dim.textPosition.y + dy,
+              };
+            }
             
             // 將世界座標轉換為螢幕座標，使標註在縮放時維持一致的像素外觀尺寸
             const sP1 = worldToScreen(p1);
             const sP2 = worldToScreen(p2);
-            const sText = worldToScreen(dim.textPosition);
+            const sText = worldToScreen(textPosition);
 
             // 判斷是否為對齊標註（若 dim 屬性中有指定，否則自動分析）
             const isAligned = (dim as any).isAligned !== false;
@@ -108,7 +179,7 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
 
                 {/* 4. 文字標籤 (帶有暗色膠囊背景，避免線條穿透) */}
                 <g
-                  transform={`rotate(${(layout.textRotation * 180) / Math.PI}, ${layout.textCenter.x}, ${layout.textCenter.y})`}
+                  transform={`translate(${layout.textCenter.x}, ${layout.textCenter.y}) rotate(${(layout.textRotation * 180) / Math.PI})`}
                   onClick={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
@@ -117,8 +188,8 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
                   className="cursor-pointer"
                 >
                   <rect
-                    x={rx}
-                    y={ry}
+                    x={-rectWidth / 2}
+                    y={-rectHeight / 2}
                     width={rectWidth}
                     height={rectHeight}
                     rx="4"
@@ -128,8 +199,8 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
                     opacity="0.95"
                   />
                   <text
-                    x={layout.textCenter.x}
-                    y={layout.textCenter.y}
+                    x={0}
+                    y={0}
                     fill="#34d399"
                     fontSize="11"
                     fontFamily="monospace"
@@ -226,7 +297,7 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
 
                 {/* 5. 文字標籤 (帶有暗色膠囊背景，避免線條穿透) */}
                 <g
-                  transform={`rotate(${(layout.textRotation * 180) / Math.PI}, ${layout.textCenter.x}, ${layout.textCenter.y})`}
+                  transform={`translate(${layout.textCenter.x}, ${layout.textCenter.y}) rotate(${(layout.textRotation * 180) / Math.PI})`}
                   onClick={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
@@ -235,8 +306,8 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
                   className="cursor-pointer"
                 >
                   <rect
-                    x={rx}
-                    y={ry}
+                    x={-rectWidth / 2}
+                    y={-rectHeight / 2}
                     width={rectWidth}
                     height={rectHeight}
                     rx="4"
@@ -246,8 +317,8 @@ export const DimensionRenderer: React.FC<DimensionRendererProps> = ({
                     opacity="0.95"
                   />
                   <text
-                    x={layout.textCenter.x}
-                    y={layout.textCenter.y}
+                    x={0}
+                    y={0}
                     fill="#34d399"
                     fontSize="11"
                     fontFamily="monospace"

@@ -166,9 +166,19 @@ export const useCADStore = create<CADState>((set, get) => ({
       featureTree: state.document.featureTree.map((f) => {
         if (f.id === state.activeSketchId && f.type === 'SKETCH') {
           const sketch = f as SketchFeature;
+
+          // 找出對應的 dimension，判定是否為直徑標註
+          const linkedDim = sketch.dimensions?.find((d) => d.constraintId === constraintId);
+          const isDiameter = linkedDim ? !!linkedDim.isDiameter : false;
+
+          // 圓形或圓弧的 radius = isDiameter ? value / 2 : value
+          const finalConstraintValue = (linkedDim && linkedDim.type === 'radial')
+            ? (isDiameter ? value / 2 : value)
+            : value;
+
           const updatedConstraints = sketch.constraints.map((c) => {
             if (c.id === constraintId) {
-              return { ...c, value };
+              return { ...c, value: finalConstraintValue };
             }
             return c;
           });
@@ -178,6 +188,142 @@ export const useCADStore = create<CADState>((set, get) => ({
             ...sketch,
             constraints: updatedConstraints,
           });
+
+          // 同步尺寸標註的點位隨幾何變形而更新
+          if (updatedSketch.dimensions) {
+            updatedSketch.dimensions = updatedSketch.dimensions.map((dim) => {
+              if (dim.constraintId === constraintId) {
+                const constraint = updatedConstraints.find((c) => c.id === constraintId);
+                if (constraint) {
+                  if (dim.type === 'radial') {
+                    if (constraint.entityIds.length === 1) {
+                      const entity = updatedSketch.entities.find((e) => e.id === constraint.entityIds[0]);
+                      if (entity && (entity.type === 'circle' || entity.type === 'arc')) {
+                        const center = { ...entity.center };
+                        const origP0 = dim.points[0];
+                        const origP1 = dim.points[1] || { x: origP0.x + 10, y: origP0.y };
+                        const dx = origP1.x - origP0.x;
+                        const dy = origP1.y - origP0.y;
+                        const len = Math.hypot(dx, dy);
+                        const dir = len > 1e-6 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 };
+                        const newEdge = {
+                          x: center.x + dir.x * entity.radius,
+                          y: center.y + dir.y * entity.radius,
+                        };
+                        return {
+                          ...dim,
+                          points: [center, newEdge],
+                        };
+                      }
+                    }
+                  } else {
+                    if (constraint.entityIds.length === 1) {
+                      const entity = updatedSketch.entities.find((e) => e.id === constraint.entityIds[0]);
+                      if (entity && entity.type === 'line') {
+                        return {
+                          ...dim,
+                          points: [{ ...entity.start }, { ...entity.end }],
+                        };
+                      }
+                    } else if (constraint.entityIds.length >= 2) {
+                      const id1 = constraint.entityIds[0];
+                      const id2 = constraint.entityIds[1];
+                      const idx1 = constraint.pointIndices?.[0] ?? 0;
+                      const idx2 = constraint.pointIndices?.[1] ?? 0;
+                      const e1 = updatedSketch.entities.find((e) => e.id === id1);
+                      const e2 = updatedSketch.entities.find((e) => e.id === id2);
+                      if (e1 && e2) {
+                        const getPoint = (entity: CADEntity2D, index: number) => {
+                          if (entity.type === 'line') {
+                            return index === 1 ? entity.end : entity.start;
+                          } else if (entity.type === 'circle' || entity.type === 'arc') {
+                            return entity.center;
+                          } else if (entity.type === 'polyline') {
+                            return entity.points[index] || entity.points[0];
+                          }
+                          return null;
+                        };
+                        const pt1 = getPoint(e1, idx1);
+                        const pt2 = getPoint(e2, idx2);
+                        if (pt1 && pt2) {
+                          return {
+                            ...dim,
+                            points: [{ ...pt1 }, { ...pt2 }],
+                          };
+                        }
+                      }
+                    }
+                  }
+                }
+              } else {
+                // 對於其他非當前編輯的標註，幾何縮放時同步其點位
+                if (dim.type === 'radial') {
+                  const linkedConstraint = updatedConstraints.find((c) => c.id === dim.constraintId);
+                  if (linkedConstraint && linkedConstraint.entityIds.length === 1) {
+                    const entity = updatedSketch.entities.find((e) => e.id === linkedConstraint.entityIds[0]);
+                    if (entity && (entity.type === 'circle' || entity.type === 'arc')) {
+                      const center = { ...entity.center };
+                      const origP0 = dim.points[0];
+                      const origP1 = dim.points[1] || { x: origP0.x + 10, y: origP0.y };
+                      const dx = origP1.x - origP0.x;
+                      const dy = origP1.y - origP0.y;
+                      const len = Math.hypot(dx, dy);
+                      const dir = len > 1e-6 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 };
+                      const newEdge = {
+                        x: center.x + dir.x * entity.radius,
+                        y: center.y + dir.y * entity.radius,
+                      };
+                      return {
+                        ...dim,
+                        points: [center, newEdge],
+                      };
+                    }
+                  }
+                } else if (dim.type === 'linear') {
+                  const linkedConstraint = updatedConstraints.find((c) => c.id === dim.constraintId);
+                  if (linkedConstraint) {
+                    if (linkedConstraint.entityIds.length === 1) {
+                      const entity = updatedSketch.entities.find((e) => e.id === linkedConstraint.entityIds[0]);
+                      if (entity && entity.type === 'line') {
+                        return {
+                          ...dim,
+                          points: [{ ...entity.start }, { ...entity.end }],
+                        };
+                      }
+                    } else if (linkedConstraint.entityIds.length >= 2) {
+                      const id1 = linkedConstraint.entityIds[0];
+                      const id2 = linkedConstraint.entityIds[1];
+                      const idx1 = linkedConstraint.pointIndices?.[0] ?? 0;
+                      const idx2 = linkedConstraint.pointIndices?.[1] ?? 0;
+                      const e1 = updatedSketch.entities.find((e) => e.id === id1);
+                      const e2 = updatedSketch.entities.find((e) => e.id === id2);
+                      if (e1 && e2) {
+                        const getPoint = (entity: CADEntity2D, index: number) => {
+                          if (entity.type === 'line') {
+                            return index === 1 ? entity.end : entity.start;
+                          } else if (entity.type === 'circle' || entity.type === 'arc') {
+                            return entity.center;
+                          } else if (entity.type === 'polyline') {
+                            return entity.points[index] || entity.points[0];
+                          }
+                          return null;
+                        };
+                        const pt1 = getPoint(e1, idx1);
+                        const pt2 = getPoint(e2, idx2);
+                        if (pt1 && pt2) {
+                          return {
+                            ...dim,
+                            points: [{ ...pt1 }, { ...pt2 }],
+                          };
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              return dim;
+            });
+          }
 
           return updatedSketch;
         }

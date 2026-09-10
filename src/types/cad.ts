@@ -63,7 +63,9 @@ export type ConstraintType =
   | 'tangent'
   | 'distance'
   | 'length'
-  | 'fix';
+  | 'fix'
+  | 'equal_length'
+  | 'equal_radius';
 
 export interface Constraint {
   id: string;
@@ -79,6 +81,8 @@ export interface Dimension {
   points: Point2D[];
   textPosition: Point2D;
   constraintId?: string;
+  isDiameter?: boolean;
+  entityIds?: string[]; // 記錄標註所依附的實體 ID 清單
 }
 
 export interface TopologyNode {

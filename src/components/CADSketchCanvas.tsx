@@ -10,6 +10,7 @@ import { useDrawMachine } from '../hooks/useDrawMachine';
 import { RubberbandPreview } from './RubberbandPreview';
 import { SnapMarker } from './SnapMarker';
 import { isEntityInSelectionBox, SelectionBox } from '../core/2d/BoxSelection';
+import { ConstraintBadgeRenderer } from './ConstraintBadgeRenderer';
 
 export const CADSketchCanvas: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -56,6 +57,7 @@ export const CADSketchCanvas: React.FC = () => {
     trimPreviewEntity,
     handlePointerMove: handleDrawPointerMove,
     handleCanvasClick,
+    dimSelectedCircleOrArc,
   } = useDrawMachine();
 
   const {
@@ -310,10 +312,17 @@ export const CADSketchCanvas: React.FC = () => {
               onSelectEntity={handleSelectEntity}
             />
           </g>
+          {/* 約束視覺標記渲染層 (置於圖元渲染層上方) */}
+          <ConstraintBadgeRenderer
+            constraints={currentConstraints}
+            entities={currentEntities}
+            worldToScreen={worldToScreen}
+          />
           {/* 尺寸標註渲染層 */}
           <g style={{ pointerEvents: 'all' }}>
             <DimensionRenderer
               dimensions={currentDimensions}
+              entities={currentEntities}
               worldToScreen={worldToScreen}
               onEditDimension={handleEditDimension}
             />
@@ -324,6 +333,7 @@ export const CADSketchCanvas: React.FC = () => {
             tool={currentTool}
             worldToScreen={worldToScreen}
             scale={scale}
+            dimSelectedCircleOrArc={dimSelectedCircleOrArc}
           />
           {/* 疊加鎖點標記層 (地位於圖元與預覽層上方) */}
           <SnapMarker

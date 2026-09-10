@@ -25,6 +25,7 @@ import {
   Lock,
   Scissors,
   Ruler,
+  AlertTriangle,
 } from 'lucide-react';
 
 export default function App() {
@@ -56,10 +57,34 @@ export default function App() {
   const solverState = activeSketch?.solverState || 'UnderDefined';
   const hasSelectedEntities = selectedEntityIds.length > 0;
   const isSingleSelected = selectedEntityIds.length === 1;
+  const isDoubleSelected = selectedEntityIds.length === 2;
   const selectedId = selectedEntityIds[0];
   const selectedEntities =
     activeSketch?.entities.filter((e) => selectedEntityIds.includes(e.id)) || [];
   const isAnySelectedConstruction = selectedEntities.some((e) => e.isConstruction);
+
+  const isBothLines =
+    isDoubleSelected &&
+    selectedEntities.length === 2 &&
+    selectedEntities.every((e) => e.type === 'line');
+
+  const isTangentApplicable =
+    isDoubleSelected &&
+    selectedEntities.length === 2 &&
+    (() => {
+      const t1 = selectedEntities[0].type;
+      const t2 = selectedEntities[1].type;
+      const isLine1 = t1 === 'line';
+      const isLine2 = t2 === 'line';
+      const isArcOrCircle1 = t1 === 'arc' || t1 === 'circle';
+      const isArcOrCircle2 = t2 === 'arc' || t2 === 'circle';
+
+      return (
+        (isLine1 && isArcOrCircle2) ||
+        (isArcOrCircle1 && isLine2) ||
+        (isArcOrCircle1 && isArcOrCircle2)
+      );
+    })();
 
   const handleToggleConstruction = () => {
     selectedEntityIds.forEach((id) => toggleConstruction(id));
@@ -90,6 +115,42 @@ export default function App() {
       type: 'fix',
       entityIds: [selectedId],
       pointIndices: [0], // 鎖定起點或中心點
+    });
+  };
+
+  const handleAddParallel = () => {
+    if (selectedEntityIds.length !== 2) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'parallel',
+      entityIds: [...selectedEntityIds],
+    });
+  };
+
+  const handleAddPerpendicular = () => {
+    if (selectedEntityIds.length !== 2) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'perpendicular',
+      entityIds: [...selectedEntityIds],
+    });
+  };
+
+  const handleAddEqualLength = () => {
+    if (selectedEntityIds.length !== 2) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'equal_length',
+      entityIds: [...selectedEntityIds],
+    });
+  };
+
+  const handleAddTangent = () => {
+    if (selectedEntityIds.length !== 2) return;
+    addConstraint({
+      id: crypto.randomUUID(),
+      type: 'tangent',
+      entityIds: [...selectedEntityIds],
     });
   };
 
@@ -234,6 +295,57 @@ export default function App() {
                     </button>
                   </>
                 )}
+                {isDoubleSelected && (
+                  <>
+                    {isBothLines && (
+                      <>
+                        <button
+                          onClick={handleAddParallel}
+                          className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                          title="平行 (Parallel)"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                            <line x1="6" y1="20" x2="14" y2="4" />
+                            <line x1="10" y1="20" x2="18" y2="4" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={handleAddPerpendicular}
+                          className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                          title="垂直 (Perpendicular)"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="4" x2="12" y2="20" />
+                            <line x1="4" y1="20" x2="20" y2="20" />
+                            <path d="M 12 16 L 16 16 L 16 20" strokeWidth="1.5" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={handleAddEqualLength}
+                          className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                          title="等長 (Equal Length)"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                            <line x1="6" y1="10" x2="18" y2="10" />
+                            <line x1="6" y1="14" x2="18" y2="14" />
+                          </svg>
+                        </button>
+                      </>
+                    )}
+                    {isTangentApplicable && (
+                      <button
+                        onClick={handleAddTangent}
+                        className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                        title="相切 (Tangent)"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="10" cy="14" r="6" />
+                          <line x1="2" y1="8" x2="18" y2="8" />
+                        </svg>
+                      </button>
+                    )}
+                  </>
+                )}
                 <button
                   onClick={handleToggleConstruction}
                   className={`p-1.5 rounded transition-colors ${
@@ -294,6 +406,15 @@ export default function App() {
 
       {/* Main Workspace */}
       <main className="flex-1 relative">
+        {solverState === 'OverDefined' && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-30 bg-red-950/95 border-2 border-red-500 text-red-100 px-5 py-3 rounded-md shadow-2xl flex items-center gap-3 animate-pulse">
+            <AlertTriangle className="text-red-500 shrink-0" size={20} />
+            <div>
+              <span className="font-bold block text-sm">草圖過度定義 (Over-defined)</span>
+              <span className="text-xs text-red-300">偵測到衝突的幾何約束或尺寸標註，請刪除衝突約束以恢復求解。</span>
+            </div>
+          </div>
+        )}
         <CADSketchCanvas />
       </main>
     </div>

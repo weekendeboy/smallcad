@@ -7,6 +7,7 @@ export interface DrawSession {
   currentCursor: Point2D | null;
   step: number;
   polylinePoints?: Point2D[];
+  inferredConstraint?: 'horizontal' | 'vertical' | null;
 }
 
 export type PreviewEntity =

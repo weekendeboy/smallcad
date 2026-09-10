@@ -267,6 +267,7 @@ export function useDrawMachine() {
   const [dimSnap1, setDimSnap1] = useState<SnapResult | null>(null);
   const [dimSnap2, setDimSnap2] = useState<SnapResult | null>(null);
   const [dimSelectedLineId, setDimSelectedLineId] = useState<string | null>(null);
+  const [dimSelectedCircleOrArc, setDimSelectedCircleOrArc] = useState<CircleEntity | ArcEntity | null>(null);
 
   // 取得目前草圖內的 entities
   let currentEntities: CADEntity2D[] = [];
@@ -291,6 +292,7 @@ export function useDrawMachine() {
     setDimSnap1(null);
     setDimSnap2(null);
     setDimSelectedLineId(null);
+    setDimSelectedCircleOrArc(null);
   }, []);
 
   // 當工具切換時，將 lastEntityId 與 firstEntityId 徹底重置，並取消繪圖操作
@@ -324,9 +326,29 @@ export function useDrawMachine() {
 
       setDrawSession((prev) => {
         if (!prev.isDrawing) return prev;
+
+        let cursor = finalPt;
+        let inferredConstraint: 'horizontal' | 'vertical' | null = null;
+
+        if (currentTool === 'LINE' && prev.startPoint) {
+          const dx = finalPt.x - prev.startPoint.x;
+          const dy = finalPt.y - prev.startPoint.y;
+          const thetaRad = Math.atan2(dy, dx);
+          const thetaDeg = thetaRad * (180 / Math.PI);
+
+          if (Math.abs(thetaDeg) < 2.5 || Math.abs(Math.abs(thetaDeg) - 180) < 2.5) {
+            cursor = { x: finalPt.x, y: prev.startPoint.y };
+            inferredConstraint = 'horizontal';
+          } else if (Math.abs(Math.abs(thetaDeg) - 90) < 2.5) {
+            cursor = { x: prev.startPoint.x, y: finalPt.y };
+            inferredConstraint = 'vertical';
+          }
+        }
+
         return {
           ...prev,
-          currentCursor: finalPt,
+          currentCursor: cursor,
+          inferredConstraint,
         };
       });
 
@@ -374,8 +396,15 @@ export function useDrawMachine() {
             step: 1,
           });
         } else if (drawSession.startPoint) {
-          const dx = clickPt.x - drawSession.startPoint.x;
-          const dy = clickPt.y - drawSession.startPoint.y;
+          let actualEndPt = clickPt;
+          if (drawSession.inferredConstraint === 'horizontal') {
+            actualEndPt = { x: clickPt.x, y: drawSession.startPoint.y };
+          } else if (drawSession.inferredConstraint === 'vertical') {
+            actualEndPt = { x: drawSession.startPoint.x, y: clickPt.y };
+          }
+
+          const dx = actualEndPt.x - drawSession.startPoint.x;
+          const dy = actualEndPt.y - drawSession.startPoint.y;
           const distance = Math.hypot(dx, dy);
 
           if (distance > 0.5) {
@@ -386,15 +415,24 @@ export function useDrawMachine() {
               locked: false,
               type: 'line',
               start: drawSession.startPoint,
-              end: clickPt,
+              end: actualEndPt,
             };
             addEntity(newLine);
+
+            // 若存在 inferredConstraint，自動調用 addConstraint 注入對應的約束！
+            if (drawSession.inferredConstraint) {
+              addConstraint({
+                id: crypto.randomUUID(),
+                type: drawSession.inferredConstraint,
+                entityIds: [newLine.id],
+              });
+            }
 
             // 判斷是否命中第一條線段起點或兩點極近形成閉合
             const firstLine = currentEntities.find((e) => e.id === firstEntityId) as LineEntity | undefined;
             const isNearFirstStart =
               firstLine && firstLine.type === 'line'
-                ? Math.hypot(clickPt.x - firstLine.start.x, clickPt.y - firstLine.start.y) < 0.5
+                ? Math.hypot(actualEndPt.x - firstLine.start.x, actualEndPt.y - firstLine.start.y) < 0.5
                 : false;
 
             const isClosing = Boolean(
@@ -435,9 +473,10 @@ export function useDrawMachine() {
           // 連續畫線：將當前點作為下一次的起點
           setDrawSession({
             isDrawing: true,
-            startPoint: clickPt,
-            currentCursor: clickPt,
+            startPoint: actualEndPt,
+            currentCursor: actualEndPt,
             step: 1,
+            inferredConstraint: null,
           });
         }
       } else if (currentTool === 'CIRCLE') {
@@ -780,89 +819,140 @@ export function useDrawMachine() {
               step: 1, // 進入步驟 1：等待點擊第二個端點
             });
           } else {
-            // 2. 檢查是否點擊在單一線段上
+            // 2. 檢查是否點擊在單一圖元 (Line, Circle, Arc) 上
             const threshold = 15 / scale;
-            let closestLine: LineEntity | null = null;
+            let closestEntity: CADEntity2D | null = null;
             let minDistance = threshold;
 
             for (const entity of currentEntities) {
-              if (entity.type === 'line') {
+              if (entity.type === 'line' || entity.type === 'circle' || entity.type === 'arc') {
                 const dist = getDistanceToEntity(clickPt, entity);
                 if (dist < minDistance) {
                   minDistance = dist;
-                  closestLine = entity;
+                  closestEntity = entity;
                 }
               }
             }
 
-            if (closestLine) {
-              setDimSelectedLineId(closestLine.id);
-              setDrawSession({
-                isDrawing: true,
-                startPoint: closestLine.start,
-                secondPoint: closestLine.end,
-                currentCursor: clickPt,
-                step: 2, // 直接進入步驟 2：等待游標移動並進行第三次點擊 (鎖定 textPosition)
-              });
+            if (closestEntity) {
+              if (closestEntity.type === 'circle' || closestEntity.type === 'arc') {
+                const center = closestEntity.center;
+                const r = closestEntity.radius;
+                const dx = clickPt.x - center.x;
+                const dy = clickPt.y - center.y;
+                const dist = Math.hypot(dx, dy);
+                const borderPt = dist > 1e-10 
+                  ? { x: center.x + (dx / dist) * r, y: center.y + (dy / dist) * r }
+                  : { x: center.x + r, y: center.y };
+
+                setDimSelectedCircleOrArc(closestEntity);
+                setDrawSession({
+                  isDrawing: true,
+                  startPoint: center,
+                  secondPoint: borderPt,
+                  currentCursor: clickPt,
+                  step: 2, // 進入引線放置階段
+                });
+              } else if (closestEntity.type === 'line') {
+                setDimSelectedLineId(closestEntity.id);
+                setDrawSession({
+                  isDrawing: true,
+                  startPoint: closestEntity.start,
+                  secondPoint: closestEntity.end,
+                  currentCursor: clickPt,
+                  step: 2, // 直接進入步驟 2：等待游標移動並進行第三次點擊 (鎖定 textPosition)
+                });
+              }
             }
           }
         } else if (drawSession.step === 1 && drawSession.startPoint) {
           // 第二次點擊 (端點模式下)：
           if (currentSnap && currentSnap.type === 'endpoint') {
             setDimSnap2(currentSnap);
-            setDrawSession((prev) => ({
-              ...prev,
-              secondPoint: currentSnap.point,
-              currentCursor: clickPt,
-              step: 2, // 進入步驟 2：等待游標移動並進行第三次點擊 (鎖定 textPosition)
-            }));
-          }
-        } else if (drawSession.step === 2 && drawSession.startPoint && drawSession.secondPoint) {
-          // 第三次點擊 (單線模式下為第二次點擊)：
-          // 鎖定 textPosition，正式建立 Dimension 物件與對應的驅動約束，並寫入 Zustand
-          const p1 = drawSession.startPoint;
-          const p2 = drawSession.secondPoint;
-          const textPosition = clickPt;
-          const physicalLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-
-          const dimensionId = crypto.randomUUID();
-          const constraintId = crypto.randomUUID();
-
-          const newDimension = {
-            id: dimensionId,
-            type: 'linear' as const,
-            points: [p1, p2],
-            textPosition: textPosition,
-            constraintId: constraintId,
-          };
-
-          let newConstraint;
-          if (dimSelectedLineId) {
-            newConstraint = {
-              id: constraintId,
-              type: 'length' as const,
-              entityIds: [dimSelectedLineId],
-              value: physicalLen,
-            };
-          } else if (dimSnap1 && dimSnap2) {
-            newConstraint = {
-              id: constraintId,
-              type: 'distance' as const,
-              entityIds: [dimSnap1.entityId, dimSnap2.entityId],
-              pointIndices: [dimSnap1.pointIndex ?? 0, dimSnap2.pointIndex ?? 0],
-              value: physicalLen,
-            };
           } else {
-            newConstraint = {
+            setDimSnap2(null);
+          }
+          setDrawSession((prev) => ({
+            ...prev,
+            secondPoint: clickPt,
+            currentCursor: clickPt,
+            step: 2, // 進入步驟 2：等待游標移動並進行第三次點擊 (鎖定 textPosition)
+          }));
+        } else if (drawSession.step === 2 && drawSession.startPoint && drawSession.secondPoint) {
+          if (dimSelectedCircleOrArc) {
+            const dimTarget = dimSelectedCircleOrArc;
+            const constraintId = crypto.randomUUID();
+            const newDimension = {
+              id: crypto.randomUUID(),
+              type: 'radial' as const,
+              points: [dimTarget.center, drawSession.secondPoint],
+              textPosition: clickPt,
+              constraintId: constraintId,
+              isDiameter: dimTarget.type === 'circle',
+            };
+            const newConstraint = {
               id: constraintId,
               type: 'distance' as const,
-              entityIds: [],
-              value: physicalLen,
+              entityIds: [dimTarget.id],
+              value: dimTarget.radius,
             };
-          }
+            addDimension(newDimension, newConstraint);
+            cancelDrawing();
+          } else {
+            // 第三次點擊 (單線模式下為第二次點擊)：
+            // 鎖定 textPosition，正式建立 Dimension 物件與對應的驅動約束，並寫入 Zustand
+            const p1 = drawSession.startPoint;
+            const p2 = drawSession.secondPoint;
+            const textPosition = clickPt;
+            const physicalLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
 
-          addDimension(newDimension, newConstraint);
-          cancelDrawing();
+            const dimensionId = crypto.randomUUID();
+            const constraintId = crypto.randomUUID();
+
+            let entityIds: string[] | undefined = undefined;
+            if (dimSelectedLineId) {
+              entityIds = [dimSelectedLineId];
+            } else if (dimSnap1 && dimSnap2) {
+              entityIds = [dimSnap1.entityId, dimSnap2.entityId];
+            }
+
+            const newDimension = {
+              id: dimensionId,
+              type: 'linear' as const,
+              points: [p1, p2],
+              textPosition: textPosition,
+              constraintId: constraintId,
+              entityIds: entityIds,
+            };
+
+            let newConstraint;
+            if (dimSelectedLineId) {
+              newConstraint = {
+                id: constraintId,
+                type: 'length' as const,
+                entityIds: [dimSelectedLineId],
+                value: physicalLen,
+              };
+            } else if (dimSnap1 && dimSnap2) {
+              newConstraint = {
+                id: constraintId,
+                type: 'distance' as const,
+                entityIds: [dimSnap1.entityId, dimSnap2.entityId],
+                pointIndices: [dimSnap1.pointIndex ?? 0, dimSnap2.pointIndex ?? 0],
+                value: physicalLen,
+              };
+            } else {
+              newConstraint = {
+                id: constraintId,
+                type: 'distance' as const,
+                entityIds: [],
+                value: physicalLen,
+              };
+            }
+
+            addDimension(newDimension, newConstraint);
+            cancelDrawing();
+          }
         }
       } else if (currentTool === 'TRIM') {
         if (trimPreviewEntity) {
@@ -906,6 +996,7 @@ export function useDrawMachine() {
       dimSnap1,
       dimSnap2,
       dimSelectedLineId,
+      dimSelectedCircleOrArc,
       addDimension,
     ]
   );
@@ -914,6 +1005,7 @@ export function useDrawMachine() {
     drawSession,
     currentSnap,
     trimPreviewEntity,
+    dimSelectedCircleOrArc,
     handlePointerMove,
     handleCanvasClick,
     cancelDrawing,
