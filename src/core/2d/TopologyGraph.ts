@@ -12,6 +12,14 @@ export interface GraphEdge {
   toNodeId: string;
   entityId: string;
   angle: number;
+  curveType?: 'line' | 'arc';
+  arcData?: {
+    center: Point2D;
+    radius: number;
+    startAngle: number;
+    endAngle: number;
+    isReversed?: boolean;
+  };
 }
 
 export class PlanarGraph {
@@ -83,6 +91,7 @@ export class PlanarGraph {
       toNodeId: node2.id,
       entityId,
       angle: angle12,
+      curveType: 'line',
     };
 
     this.edges.set(edge12Id, edge12);
@@ -100,6 +109,85 @@ export class PlanarGraph {
       toNodeId: node1.id,
       entityId,
       angle: angle21,
+      curveType: 'line',
+    };
+
+    this.edges.set(edge21Id, edge21);
+    node2.outgoingEdgeIds.push(edge21Id);
+  }
+
+  /**
+   * Adds bidirectional directed edges for an arc entity.
+   */
+  public addBiDirectionalArcEdge(
+    center: Point2D,
+    radius: number,
+    startAngle: number,
+    endAngle: number,
+    entityId: string,
+    tolerance: number = 1e-3,
+    node1Id?: string,
+    node2Id?: string
+  ): void {
+    const startPt: Point2D = {
+      x: center.x + radius * Math.cos(startAngle),
+      y: center.y + radius * Math.sin(startAngle),
+    };
+    const endPt: Point2D = {
+      x: center.x + radius * Math.cos(endAngle),
+      y: center.y + radius * Math.sin(endAngle),
+    };
+
+    const node1 = node1Id && this.nodes.has(node1Id) ? this.nodes.get(node1Id)! : this.addNode(startPt, tolerance, node1Id);
+    const node2 = node2Id && this.nodes.has(node2Id) ? this.nodes.get(node2Id)! : this.addNode(endPt, tolerance, node2Id);
+
+    if (node1.id === node2.id) {
+      return;
+    }
+
+    const dx12 = node2.point.x - node1.point.x;
+    const dy12 = node2.point.y - node1.point.y;
+    const angle12 = Math.atan2(dy12, dx12);
+    const edge12Id = `edge_${this.nextEdgeId++}`;
+
+    const edge12: GraphEdge = {
+      id: edge12Id,
+      fromNodeId: node1.id,
+      toNodeId: node2.id,
+      entityId,
+      angle: angle12,
+      curveType: 'arc',
+      arcData: {
+        center: { ...center },
+        radius,
+        startAngle,
+        endAngle,
+        isReversed: false,
+      },
+    };
+
+    this.edges.set(edge12Id, edge12);
+    node1.outgoingEdgeIds.push(edge12Id);
+
+    const dx21 = node1.point.x - node2.point.x;
+    const dy21 = node1.point.y - node2.point.y;
+    const angle21 = Math.atan2(dy21, dx21);
+    const edge21Id = `edge_${this.nextEdgeId++}`;
+
+    const edge21: GraphEdge = {
+      id: edge21Id,
+      fromNodeId: node2.id,
+      toNodeId: node1.id,
+      entityId,
+      angle: angle21,
+      curveType: 'arc',
+      arcData: {
+        center: { ...center },
+        radius,
+        startAngle,
+        endAngle,
+        isReversed: true,
+      },
     };
 
     this.edges.set(edge21Id, edge21);
@@ -206,6 +294,7 @@ export class PlanarGraph {
           toNodeId: node2.id,
           entityId: entity.id,
           angle: angle12,
+          curveType: 'line',
         };
         graph.edges.set(edge12Id, edge12);
         node1.outgoingEdgeIds.push(edge12Id);
@@ -222,6 +311,7 @@ export class PlanarGraph {
           toNodeId: node1.id,
           entityId: entity.id,
           angle: angle21,
+          curveType: 'line',
         };
         graph.edges.set(edge21Id, edge21);
         node2.outgoingEdgeIds.push(edge21Id);
@@ -252,6 +342,14 @@ export class PlanarGraph {
           toNodeId: node2.id,
           entityId: entity.id,
           angle: angle12,
+          curveType: 'arc',
+          arcData: {
+            center: { ...entity.center },
+            radius: entity.radius,
+            startAngle: entity.startAngle,
+            endAngle: entity.endAngle,
+            isReversed: false,
+          },
         };
         graph.edges.set(edge12Id, edge12);
         node1.outgoingEdgeIds.push(edge12Id);
@@ -267,6 +365,14 @@ export class PlanarGraph {
           toNodeId: node1.id,
           entityId: entity.id,
           angle: angle21,
+          curveType: 'arc',
+          arcData: {
+            center: { ...entity.center },
+            radius: entity.radius,
+            startAngle: entity.startAngle,
+            endAngle: entity.endAngle,
+            isReversed: true,
+          },
         };
         graph.edges.set(edge21Id, edge21);
         node2.outgoingEdgeIds.push(edge21Id);
@@ -296,6 +402,7 @@ export class PlanarGraph {
               toNodeId: node2.id,
               entityId: entity.id,
               angle: angle12,
+              curveType: 'line',
             };
             graph.edges.set(edge12Id, edge12);
             node1.outgoingEdgeIds.push(edge12Id);
@@ -311,6 +418,7 @@ export class PlanarGraph {
               toNodeId: node1.id,
               entityId: entity.id,
               angle: angle21,
+              curveType: 'line',
             };
             graph.edges.set(edge21Id, edge21);
             node2.outgoingEdgeIds.push(edge21Id);

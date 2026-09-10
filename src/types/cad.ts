@@ -94,9 +94,22 @@ export interface TopologyEdge {
   entityId: string;
 }
 
+export interface ProfileSegment {
+  type: 'line' | 'arc';
+  start: Point2D;
+  end: Point2D;
+  center?: Point2D;
+  radius?: number;
+  startAngle?: number;
+  endAngle?: number;
+  isLargeArc?: boolean;
+  sweepFlag?: number;
+}
+
 export interface SketchProfile {
   id: string;
   outerLoop: Point2D[];
+  segments: ProfileSegment[];
   innerLoops: Point2D[][];
   area: number;
   isClockwise: boolean;

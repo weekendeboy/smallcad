@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Point2D, SketchProfile } from '../types/cad';
+import { Point2D, SketchProfile, ProfileSegment } from '../types/cad';
 
 export interface ProfileRendererProps {
   profiles: SketchProfile[];
@@ -23,6 +23,38 @@ function loopToSvgPath(points: Point2D[], worldToScreen: (pt: Point2D) => Point2
   return pathStr;
 }
 
+/**
+ * Converts a segment list (consisting of lines and arcs) into an SVG path subpath string.
+ */
+function segmentsToSvgPath(
+  segments: ProfileSegment[],
+  worldToScreen: (pt: Point2D) => Point2D
+): string {
+  if (!segments || segments.length === 0) return '';
+
+  const p0 = worldToScreen({ x: 0, y: 0 });
+  const p1 = worldToScreen({ x: 1, y: 0 });
+  const scale = Math.sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y));
+
+  const startPt = worldToScreen(segments[0].start);
+  let pathStr = `M ${startPt.x} ${startPt.y}`;
+
+  for (const seg of segments) {
+    const screenTo = worldToScreen(seg.end);
+    if (seg.type === 'arc' && seg.radius !== undefined) {
+      const rScreen = seg.radius * scale;
+      const largeArc = seg.isLargeArc ? 1 : 0;
+      const sweep = seg.sweepFlag ?? 0;
+      pathStr += ` A ${rScreen} ${rScreen} 0 ${largeArc} ${sweep} ${screenTo.x} ${screenTo.y}`;
+    } else {
+      pathStr += ` L ${screenTo.x} ${screenTo.y}`;
+    }
+  }
+
+  pathStr += ' Z';
+  return pathStr;
+}
+
 export const ProfileRenderer: React.FC<ProfileRendererProps> = ({
   profiles,
   worldToScreen,
@@ -37,11 +69,22 @@ export const ProfileRenderer: React.FC<ProfileRendererProps> = ({
     <g id="sketch-profiles-layer" className="sketch-profiles">
       {profiles.map((profile) => {
         // Build the combined path (outer loop + inner loops)
-        let d = loopToSvgPath(profile.outerLoop, worldToScreen);
+        let d = '';
+        if (profile.segments && profile.segments.length > 0) {
+          d = segmentsToSvgPath(profile.segments, worldToScreen);
+        } else {
+          d = loopToSvgPath(profile.outerLoop, worldToScreen);
+        }
 
         if (profile.innerLoops && profile.innerLoops.length > 0) {
-          for (const innerLoop of profile.innerLoops) {
-            d += ' ' + loopToSvgPath(innerLoop, worldToScreen);
+          for (let i = 0; i < profile.innerLoops.length; i++) {
+            const innerLoop = profile.innerLoops[i];
+            const innerSegs = (profile as any).innerSegments?.[i];
+            if (innerSegs && innerSegs.length > 0) {
+              d += ' ' + segmentsToSvgPath(innerSegs, worldToScreen);
+            } else {
+              d += ' ' + loopToSvgPath(innerLoop, worldToScreen);
+            }
           }
         }
 

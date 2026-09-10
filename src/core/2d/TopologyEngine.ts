@@ -1,4 +1,4 @@
-import { CADEntity2D, Constraint, Point2D, SketchProfile } from '../../types/cad';
+import { CADEntity2D, Constraint, Point2D, SketchProfile, ProfileSegment } from '../../types/cad';
 import { PlanarGraph, GraphEdge } from './TopologyGraph';
 
 /**
@@ -128,15 +128,38 @@ export function findClosedProfiles(
         });
       }
 
-      if (reverseIndex === -1) {
-        break;
-      }
+      if (numOutgoing === 2) {
+        const edge0 = graph.edges.get(outgoing[0]);
+        const edge1 = graph.edges.get(outgoing[1]);
+        if (edge0 && edge1) {
+          if (edge0.entityId === currentEdge.entityId) {
+            currentEdge = edge1;
+          } else {
+            currentEdge = edge0;
+          }
+        } else {
+          break;
+        }
+      } else {
+        if (reverseIndex === -1) {
+          break;
+        }
 
-      // Left-most Turn: Select the edge immediately preceding the reverse edge in CCW order
-      // (which is the next clockwise edge from the incoming direction ray)
-      const nextEdgeIndex = (reverseIndex - 1 + numOutgoing) % numOutgoing;
-      const nextEdgeId = outgoing[nextEdgeIndex];
-      currentEdge = graph.edges.get(nextEdgeId);
+        // Left-most Turn: Select the edge immediately preceding the reverse edge in CCW order
+        // (which is the next clockwise edge from the incoming direction ray)
+        let nextEdgeIndex = (reverseIndex - 1 + numOutgoing) % numOutgoing;
+        let nextEdgeId = outgoing[nextEdgeIndex];
+        let nextEdge = graph.edges.get(nextEdgeId);
+
+        // 嚴格禁止挑選到「剛走過的那條實體邊的反向邊」（排除相同實體的折返邊）
+        if (nextEdge && nextEdge.entityId === currentEdge.entityId) {
+          nextEdgeIndex = (nextEdgeIndex - 1 + numOutgoing) % numOutgoing;
+          nextEdgeId = outgoing[nextEdgeIndex];
+          nextEdge = graph.edges.get(nextEdgeId);
+        }
+
+        currentEdge = nextEdge;
+      }
 
       if (currentEdge && currentEdge.id === startEdgeId) {
         break;
@@ -148,23 +171,77 @@ export function findClosedProfiles(
       visitedEdgeIds.add(edge.id);
     }
 
-    // Check if the loop successfully closed back to the start edge with at least 3 vertices
+    // Check if the loop successfully closed back to the start edge with at least 2 vertices
     if (
-      loopEdges.length >= 3 &&
+      loopEdges.length >= 2 &&
       currentEdge !== undefined &&
       currentEdge.id === startEdgeId
     ) {
-      const signedArea = calculateSignedArea(loopPoints);
+      const polyArea = calculateSignedArea(loopPoints);
+      const loopSegments: ProfileSegment[] = [];
+      let totalArea = polyArea;
 
-      // Filter loops with vertex count < 3 or absolute area < 1e-3
-      if (Math.abs(signedArea) >= 1e-3) {
+      for (const edge of loopEdges) {
+        const fromNode = graph.nodes.get(edge.fromNodeId);
+        const toNode = graph.nodes.get(edge.toNodeId);
+        if (!fromNode || !toNode) continue;
+
+        const startPoint = { x: fromNode.point.x, y: fromNode.point.y };
+        const endPoint = { x: toNode.point.x, y: toNode.point.y };
+
+        if (edge.curveType === 'arc' && edge.arcData) {
+          const { center, radius, startAngle, endAngle, isReversed = false } = edge.arcData;
+
+          let diffAngle = endAngle - startAngle;
+          while (diffAngle < 0) {
+            diffAngle += 2 * Math.PI;
+          }
+          while (diffAngle >= 2 * Math.PI) {
+            diffAngle -= 2 * Math.PI;
+          }
+
+          const isLargeArc = diffAngle > Math.PI;
+          const sweepFlag = isReversed ? 1 : 0;
+
+          const segment: ProfileSegment = {
+            type: 'arc',
+            start: startPoint,
+            end: endPoint,
+            center: { ...center },
+            radius,
+            startAngle: isReversed ? endAngle : startAngle,
+            endAngle: isReversed ? startAngle : endAngle,
+            isLargeArc,
+            sweepFlag,
+          };
+          loopSegments.push(segment);
+
+          // Calculate Circular Segment Area: A_seg = 0.5 * R^2 * (diffAngle - sin(diffAngle))
+          const A_seg = 0.5 * radius * radius * (diffAngle - Math.sin(diffAngle));
+          if (isReversed) {
+            totalArea -= A_seg;
+          } else {
+            totalArea += A_seg;
+          }
+        } else {
+          loopSegments.push({
+            type: 'line',
+            start: startPoint,
+            end: endPoint,
+          });
+        }
+      }
+
+      // Filter loops with absolute total area >= 1e-3
+      if (Math.abs(totalArea) >= 1e-3) {
         // Area > 0 (CCW) designates an outer planar profile
-        if (signedArea > 0) {
+        if (totalArea > 0) {
           profiles.push({
             id: `profile_${profileCounter++}`,
             outerLoop: loopPoints,
+            segments: loopSegments,
             innerLoops: [],
-            area: Math.abs(signedArea),
+            area: Math.abs(totalArea),
             isClockwise: false,
           });
         }
