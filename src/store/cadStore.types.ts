@@ -1,10 +1,10 @@
-import { CADDocument, CADEntity2D, Constraint } from '../types/cad';
+import { CADDocument, CADEntity2D, Constraint, Point2D } from '../types/cad';
 
 export interface CADState {
   document: CADDocument;
   
   viewMode: '2D' | '3D';
-  currentTool: 'SELECT' | 'LINE' | 'RECTANGLE' | 'CIRCLE' | 'ARC' | 'ARC_3P' | 'ARC_CENTER' | 'POLYLINE' | 'PAN' | 'DIMENSION';
+  currentTool: 'SELECT' | 'LINE' | 'RECTANGLE' | 'CIRCLE' | 'ARC' | 'ARC_3P' | 'ARC_CENTER' | 'POLYLINE' | 'PAN' | 'DIMENSION' | 'TRIM';
   activeSketchId: string | null;
   selectedEntityIds: string[];
   selectedFeatureId: string | null;
@@ -14,7 +14,7 @@ export interface CADState {
   redoStack: CADDocument[];
 
   setViewMode: (mode: '2D' | '3D') => void;
-  setTool: (tool: 'SELECT' | 'LINE' | 'RECTANGLE' | 'CIRCLE' | 'ARC' | 'ARC_3P' | 'ARC_CENTER' | 'POLYLINE' | 'PAN' | 'DIMENSION') => void;
+  setTool: (tool: 'SELECT' | 'LINE' | 'RECTANGLE' | 'CIRCLE' | 'ARC' | 'ARC_3P' | 'ARC_CENTER' | 'POLYLINE' | 'PAN' | 'DIMENSION' | 'TRIM') => void;
   setActiveSketch: (sketchId: string | null) => void;
   selectEntity: (id: string) => void;
   clearSelection: () => void;
@@ -23,7 +23,10 @@ export interface CADState {
   updateEntity: (id: string, updates: Partial<CADEntity2D>) => void;
   toggleConstruction: (entityId: string) => void;
   addConstraint: (constraint: Constraint) => void;
+  addDimension: (dimension: any, constraint: Constraint) => void;
   removeConstraint: (constraintId: string) => void;
+  updateConstraintValue: (constraintId: string, value: number) => void;
+  trimEntity: (entityId: string, clickPoint: Point2D) => void;
   toggleOsnap: () => void;
   resetDocument: () => void;
   undo: () => void;

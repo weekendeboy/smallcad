@@ -2,6 +2,7 @@ import React from 'react';
 import { Point2D } from '../types/cad';
 import { DrawSession } from '../types/sketchInteraction';
 import { calculate3PointArc } from '../core/2d/GeometryMath';
+import { calculateLinearDimensionLayout } from '../core/2d/DimensionEngine';
 
 export interface RubberbandPreviewProps {
   session: DrawSession;
@@ -316,6 +317,122 @@ export const RubberbandPreview: React.FC<RubberbandPreviewProps> = ({
         fill="none"
       />
     );
+  }
+
+  if (tool === 'DIMENSION') {
+    if (session.step === 1 || !session.secondPoint) {
+      return (
+        <g id="dimension-rubberband-step1">
+          <line
+            x1={startScreen.x}
+            y1={startScreen.y}
+            x2={cursorScreen.x}
+            y2={cursorScreen.y}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            fill="none"
+          />
+          <circle cx={startScreen.x} cy={startScreen.y} r={3.5} fill={strokeColor} />
+          <circle cx={cursorScreen.x} cy={cursorScreen.y} r={2.5} fill={strokeColor} opacity={0.7} />
+        </g>
+      );
+    } else if (session.step === 2 && session.secondPoint) {
+      const sP1 = startScreen;
+      const sP2 = worldToScreen(session.secondPoint);
+      const sText = cursorScreen;
+
+      try {
+        const layout = calculateLinearDimensionLayout(
+          sP1,
+          sP2,
+          sText,
+          true,
+          7.0,
+          Math.PI / 6,
+          3.0,
+          4.0
+        );
+
+        const physicalLen = Math.hypot(session.secondPoint.x - session.startPoint.x, session.secondPoint.y - session.startPoint.y);
+        const textStr = `${physicalLen.toFixed(1)} mm`;
+
+        const charCount = textStr.length;
+        const rectWidth = charCount * 7.5 + 12;
+        const rectHeight = 18;
+        const rx = layout.textCenter.x - rectWidth / 2;
+        const ry = layout.textCenter.y - rectHeight / 2;
+
+        return (
+          <g id="dimension-rubberband-step2" opacity="0.8">
+            <line
+              x1={layout.extension1.start.x}
+              y1={layout.extension1.start.y}
+              x2={layout.extension1.end.x}
+              y2={layout.extension1.end.y}
+              stroke="#eab308"
+              strokeWidth="1.2"
+              className="pointer-events-none"
+            />
+            <line
+              x1={layout.extension2.start.x}
+              y1={layout.extension2.start.y}
+              x2={layout.extension2.end.x}
+              y2={layout.extension2.end.y}
+              stroke="#eab308"
+              strokeWidth="1.2"
+              className="pointer-events-none"
+            />
+            <line
+              x1={layout.dimensionLine.start.x}
+              y1={layout.dimensionLine.start.y}
+              x2={layout.dimensionLine.end.x}
+              y2={layout.dimensionLine.end.y}
+              stroke="#eab308"
+              strokeWidth="1.2"
+              className="pointer-events-none"
+            />
+            <polygon
+              points={`${layout.arrow1.tip.x},${layout.arrow1.tip.y} ${layout.arrow1.wing1.x},${layout.arrow1.wing1.y} ${layout.arrow1.wing2.x},${layout.arrow1.wing2.y}`}
+              fill="#eab308"
+              className="pointer-events-none"
+            />
+            <polygon
+              points={`${layout.arrow2.tip.x},${layout.arrow2.tip.y} ${layout.arrow2.wing1.x},${layout.arrow2.wing1.y} ${layout.arrow2.wing2.x},${layout.arrow2.wing2.y}`}
+              fill="#eab308"
+              className="pointer-events-none"
+            />
+            <g transform={`rotate(${(layout.textRotation * 180) / Math.PI}, ${layout.textCenter.x}, ${layout.textCenter.y})`}>
+              <rect
+                x={rx}
+                y={ry}
+                width={rectWidth}
+                height={rectHeight}
+                rx="4"
+                fill="#1e293b"
+                stroke="#eab308"
+                strokeWidth="1.2"
+                opacity="0.95"
+              />
+              <text
+                x={layout.textCenter.x}
+                y={layout.textCenter.y}
+                fill="#facc15"
+                fontSize="11"
+                fontFamily="monospace"
+                fontWeight="bold"
+                textAnchor="middle"
+                dominantBaseline="central"
+              >
+                {textStr}
+              </text>
+            </g>
+          </g>
+        );
+      } catch (err) {
+        console.error("Error rendering dimension preview:", err);
+      }
+    }
   }
 
   return null;

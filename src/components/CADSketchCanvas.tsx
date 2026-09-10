@@ -4,15 +4,28 @@ import { useViewport } from '../hooks/useViewport';
 import { CADGrid } from './CADGrid';
 import { EntityRenderer } from './EntityRenderer';
 import { ProfileRenderer } from './ProfileRenderer';
-import { Point2D, SketchFeature } from '../types/cad';
+import { DimensionRenderer } from './DimensionRenderer';
+import { Point2D, SketchFeature, Dimension } from '../types/cad';
 import { useDrawMachine } from '../hooks/useDrawMachine';
 import { RubberbandPreview } from './RubberbandPreview';
 import { SnapMarker } from './SnapMarker';
+import { isEntityInSelectionBox, SelectionBox } from '../core/2d/BoxSelection';
 
 export const CADSketchCanvas: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [mouseWorldPos, setMouseWorldPos] = useState<Point2D>({ x: 0, y: 0 });
+
+  // 框選狀態
+  const [boxSelectStart, setBoxSelectStart] = useState<Point2D | null>(null);
+  const [boxSelectCurrent, setBoxSelectCurrent] = useState<Point2D | null>(null);
+
+  // 尺寸編輯狀態
+  const [editingDimension, setEditingDimension] = useState<{
+    dimension: Dimension;
+    screenPos: Point2D;
+    currentValue: string;
+  } | null>(null);
 
   const {
     currentTool,
@@ -22,6 +35,7 @@ export const CADSketchCanvas: React.FC = () => {
     osnapEnabled,
     selectEntity,
     clearSelection,
+    updateConstraintValue,
   } = useCADStore();
 
   const handleSelectEntity = useCallback(
@@ -39,6 +53,7 @@ export const CADSketchCanvas: React.FC = () => {
   const {
     drawSession,
     currentSnap,
+    trimPreviewEntity,
     handlePointerMove: handleDrawPointerMove,
     handleCanvasClick,
   } = useDrawMachine();
@@ -50,6 +65,47 @@ export const CADSketchCanvas: React.FC = () => {
     screenToWorld,
     handlers: viewportHandlers,
   } = useViewport({ initialPan: { x: 0, y: 0 }, initialScale: 1.0 });
+
+  // 處理雙擊編輯尺寸標註事件
+  const handleEditDimension = useCallback((dim: Dimension) => {
+    if (!dim.constraintId) return;
+    
+    // 找出對應的約束，讀取目前數值
+    const sketch = document.featureTree.find(
+      (f) => f.id === activeSketchId && f.type === 'SKETCH'
+    ) as SketchFeature | undefined;
+    const constraints = sketch?.constraints || [];
+    const linkedConstraint = constraints.find((c) => c.id === dim.constraintId);
+    
+    const initialVal = linkedConstraint?.value !== undefined 
+      ? linkedConstraint.value 
+      : (dim.type === 'linear' 
+          ? Math.hypot(dim.points[1].x - dim.points[0].x, dim.points[1].y - dim.points[0].y)
+          : Math.hypot((dim.points[1]?.x || dim.points[0].x + 10) - dim.points[0].x, (dim.points[1]?.y || dim.points[0].y) - dim.points[0].y)
+        );
+
+    // 計算文字的螢幕座標位置
+    const screenPt = worldToScreen(dim.textPosition);
+
+    setEditingDimension({
+      dimension: dim,
+      screenPos: screenPt,
+      currentValue: Number(initialVal.toFixed(2)).toString(),
+    });
+  }, [document, activeSketchId, worldToScreen]);
+
+  const handleConfirmEdit = () => {
+    if (!editingDimension) return;
+    const { dimension, currentValue } = editingDimension;
+    const value = parseFloat(currentValue);
+    
+    if (!isNaN(value) && value > 0) {
+      if (dimension.constraintId) {
+        updateConstraintValue(dimension.constraintId, value);
+      }
+    }
+    setEditingDimension(null);
+  };
 
   // 處理 Resize
   useEffect(() => {
@@ -82,34 +138,20 @@ export const CADSketchCanvas: React.FC = () => {
       const worldPt = screenToWorld(screenPt);
       setMouseWorldPos(worldPt);
       handleDrawPointerMove(worldPt, scale);
-    },
-    [viewportHandlers, screenToWorld, handleDrawPointerMove, scale]
-  );
 
-  // 處理滑鼠點擊 (過濾掉中鍵平移與右鍵)
-  const handlePointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      viewportHandlers.onPointerDown(e);
-      
-      // 僅左鍵點擊 (button 0) 才觸發繪圖事件
-      if (e.button === 0) {
-        if (!containerRef.current) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        const screenPt = {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-        };
-        const worldPt = screenToWorld(screenPt);
-        handleCanvasClick(worldPt);
+      // 若正在框選，更新目前世界座標
+      if (boxSelectStart) {
+        setBoxSelectCurrent(worldPt);
       }
     },
-    [viewportHandlers, screenToWorld, handleCanvasClick]
+    [viewportHandlers, screenToWorld, handleDrawPointerMove, scale, boxSelectStart]
   );
 
-  // 取得目前草圖內的 entities, profiles, constraints 與 solverState
+  // 取得目前草圖內的 entities, profiles, constraints, dimensions 與 solverState
   let currentEntities: any[] = [];
   let currentProfiles: any[] = [];
   let currentConstraints: any[] = [];
+  let currentDimensions: any[] = [];
   let currentSolverState: any = 'UnderDefined';
   if (activeSketchId) {
     const sketch = document.featureTree.find(
@@ -119,9 +161,105 @@ export const CADSketchCanvas: React.FC = () => {
       currentEntities = sketch.entities;
       currentProfiles = sketch.profiles || [];
       currentConstraints = sketch.constraints || [];
+      currentDimensions = sketch.dimensions || [];
       currentSolverState = sketch.solverState;
     }
   }
+
+  // 處理滑鼠按鍵按下
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      viewportHandlers.onPointerDown(e);
+      
+      // 僅左鍵點擊 (button 0) 才觸發繪圖或框選事件
+      if (e.button === 0) {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const screenPt = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+        const worldPt = screenToWorld(screenPt);
+
+        if (currentTool === 'SELECT') {
+          // 若點擊在空白背景處（未直接選中圖元），記錄框選起始點與當前點
+          if (!(e.target as HTMLElement).closest('.cad-entity')) {
+            setBoxSelectStart(worldPt);
+            setBoxSelectCurrent(worldPt);
+            // 若未按住 Shift 鍵，先呼叫 clearSelection() 清空已選圖元
+            if (!e.shiftKey) {
+              clearSelection();
+            }
+          }
+        } else {
+          handleCanvasClick(worldPt, scale);
+        }
+      }
+    },
+    [viewportHandlers, screenToWorld, currentTool, clearSelection, handleCanvasClick]
+  );
+
+  // 處理滑鼠放開
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      viewportHandlers.onPointerUp(e);
+
+      if (boxSelectStart) {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const screenPt = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+        const worldPt = screenToWorld(screenPt);
+
+        // 計算世界座標包圍盒
+        const minX = Math.min(boxSelectStart.x, worldPt.x);
+        const maxX = Math.max(boxSelectStart.x, worldPt.x);
+        const minY = Math.min(boxSelectStart.y, worldPt.y);
+        const maxY = Math.max(boxSelectStart.y, worldPt.y);
+
+        // 判定拖曳方向
+        const isCrossing = worldPt.x < boxSelectStart.x; // 向左拉為 Crossing 綠框；向右拉為 Window 藍框
+
+        // 若框的寬度與高度皆大於 1 / scale（避免單擊誤觸）
+        if (maxX - minX > 1 / scale && maxY - minY > 1 / scale) {
+          const selectionBox: SelectionBox = {
+            minX,
+            maxX,
+            minY,
+            maxY,
+            isCrossing,
+          };
+
+          // 遍歷 currentEntities，篩選出符合條件的圖元
+          const matchedEntities = currentEntities.filter((entity) =>
+            isEntityInSelectionBox(entity, selectionBox)
+          );
+
+          // 將命中的圖元 ID 加入 Zustand 的 selectEntity
+          matchedEntities.forEach((entity) => {
+            selectEntity(entity.id);
+          });
+        }
+      }
+
+      // 清空框選狀態
+      setBoxSelectStart(null);
+      setBoxSelectCurrent(null);
+    },
+    [viewportHandlers, boxSelectStart, screenToWorld, scale, currentEntities, selectEntity]
+  );
+
+  // 處理滑鼠取消事件
+  const handlePointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      viewportHandlers.onPointerCancel(e);
+      setBoxSelectStart(null);
+      setBoxSelectCurrent(null);
+    },
+    [viewportHandlers]
+  );
 
   // 格式化鎖點類型名稱
   const snapLabel = currentSnap
@@ -137,8 +275,8 @@ export const CADSketchCanvas: React.FC = () => {
       onWheel={viewportHandlers.onWheel}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={viewportHandlers.onPointerUp}
-      onPointerCancel={viewportHandlers.onPointerCancel}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
       style={{ touchAction: 'none' }}
     >
       {dimensions.width > 0 && dimensions.height > 0 && (
@@ -170,6 +308,14 @@ export const CADSketchCanvas: React.FC = () => {
               scale={scale}
               solverState={currentSolverState}
               onSelectEntity={handleSelectEntity}
+            />
+          </g>
+          {/* 尺寸標註渲染層 */}
+          <g style={{ pointerEvents: 'all' }}>
+            <DimensionRenderer
+              dimensions={currentDimensions}
+              worldToScreen={worldToScreen}
+              onEditDimension={handleEditDimension}
             />
           </g>
           {/* 疊加繪圖預覽層 */}
@@ -235,13 +381,103 @@ export const CADSketchCanvas: React.FC = () => {
                 </g>
               );
             })}
+
+          {/* Trim 預覽高亮層 */}
+          {trimPreviewEntity && currentTool === 'TRIM' && (() => {
+            const commonProps = {
+              stroke: '#ef4444',
+              strokeWidth: 3,
+              strokeDasharray: '4,4',
+              fill: 'none',
+              className: 'cad-trim-preview',
+            };
+
+            if (trimPreviewEntity.type === 'line') {
+              const start = worldToScreen(trimPreviewEntity.start);
+              const end = worldToScreen(trimPreviewEntity.end);
+              return (
+                <line
+                  key={trimPreviewEntity.id}
+                  x1={start.x}
+                  y1={start.y}
+                  x2={end.x}
+                  y2={end.y}
+                  {...commonProps}
+                />
+              );
+            } else if (trimPreviewEntity.type === 'arc') {
+              const worldStart = {
+                x: trimPreviewEntity.center.x + trimPreviewEntity.radius * Math.cos(trimPreviewEntity.startAngle),
+                y: trimPreviewEntity.center.y + trimPreviewEntity.radius * Math.sin(trimPreviewEntity.startAngle),
+              };
+              const worldEnd = {
+                x: trimPreviewEntity.center.x + trimPreviewEntity.radius * Math.cos(trimPreviewEntity.endAngle),
+                y: trimPreviewEntity.center.y + trimPreviewEntity.radius * Math.sin(trimPreviewEntity.endAngle),
+              };
+
+              const start = worldToScreen(worldStart);
+              const end = worldToScreen(worldEnd);
+              const screenRadius = trimPreviewEntity.radius * scale;
+
+              let diff = trimPreviewEntity.endAngle - trimPreviewEntity.startAngle;
+              while (diff < 0) diff += 2 * Math.PI;
+              while (diff >= 2 * Math.PI) diff -= 2 * Math.PI;
+
+              const largeArcFlag = diff > Math.PI ? 1 : 0;
+              const sweepFlag = 0;
+
+              const pathData = `M ${start.x} ${start.y} A ${screenRadius} ${screenRadius} 0 ${largeArcFlag} ${sweepFlag} ${end.x} ${end.y}`;
+
+              return (
+                <path
+                  key={trimPreviewEntity.id}
+                  d={pathData}
+                  {...commonProps}
+                />
+              );
+            }
+            return null;
+          })()}
+
+          {/* AutoCAD 框選矩形預覽 */}
+          {boxSelectStart && boxSelectCurrent && (() => {
+            const pStart = worldToScreen(boxSelectStart);
+            const pCur = worldToScreen(boxSelectCurrent);
+            const rectX = Math.min(pStart.x, pCur.x);
+            const rectY = Math.min(pStart.y, pCur.y);
+            const rectW = Math.abs(pCur.x - pStart.x);
+            const rectH = Math.abs(pCur.y - pStart.y);
+
+            const isCrossing = pCur.x < pStart.x;
+            const fill = isCrossing ? 'rgba(52, 199, 89, 0.15)' : 'rgba(0, 122, 255, 0.15)';
+            const stroke = isCrossing ? '#34c759' : '#007aff';
+            const strokeDasharray = isCrossing ? '4,4' : undefined;
+
+            return (
+              <rect
+                x={rectX}
+                y={rectY}
+                width={rectW}
+                height={rectH}
+                fill={fill}
+                stroke={stroke}
+                strokeWidth="1"
+                strokeDasharray={strokeDasharray}
+                className="pointer-events-none"
+              />
+            );
+          })()}
         </svg>
       )}
 
       {/* AutoCAD 風格的黑色半透明狀態列 */}
       <div className="absolute bottom-0 right-0 m-4 px-4 py-2 bg-black bg-opacity-70 text-green-400 font-mono text-sm rounded pointer-events-none select-none flex gap-6 items-center">
         <div>
-          {drawSession.isDrawing
+          {currentTool === 'TRIM'
+            ? 'Trim: Click intersecting edge to cut'
+            : currentTool === 'DIMENSION'
+            ? 'Dimension: Click entity/points, then click to place dimension'
+            : drawSession.isDrawing
             ? `Drawing: ${currentTool} (Pick next point or ESC to exit)`
             : 'Ready'}
         </div>
@@ -262,6 +498,44 @@ export const CADSketchCanvas: React.FC = () => {
           Scale: {scale.toFixed(2)}x
         </div>
       </div>
+
+      {/* 尺寸修改浮動輸入框 */}
+      {editingDimension && (
+        <div
+          className="absolute z-50 p-2 bg-neutral-900/95 border border-neutral-700 rounded-md shadow-2xl flex items-center gap-1.5"
+          style={{
+            left: `${editingDimension.screenPos.x}px`,
+            top: `${editingDimension.screenPos.y}px`,
+            transform: 'translate(-50%, -50%)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="text"
+            className="w-24 px-2 py-1 text-sm text-center font-mono text-emerald-400 bg-neutral-950 border border-neutral-600 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+            value={editingDimension.currentValue}
+            onChange={(e) =>
+              setEditingDimension({
+                ...editingDimension,
+                currentValue: e.target.value,
+              })
+            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleConfirmEdit();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setEditingDimension(null);
+              }
+            }}
+            autoFocus
+            onFocus={(e) => e.target.select()}
+            onBlur={handleConfirmEdit}
+          />
+          <span className="text-xs text-neutral-400 font-mono pr-1">mm</span>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,13 +1,16 @@
 import { create } from 'zustand';
 import { CADState } from './cadStore.types';
-import { CADEntity2D, createEmptyCADDocument, DatumFrontPlane, SketchFeature } from '../types/cad';
+import { CADDocument, CADEntity2D, createEmptyCADDocument, DatumFrontPlane, SketchFeature } from '../types/cad';
 import {
   insertEntityIntoSketch,
   removeEntityFromSketch,
   updateEntityInSketch,
   addConstraintToSketch,
+  addDimensionToSketch,
   removeConstraintFromSketch,
+  applyConstraintsToSketch,
 } from './sketchMutators';
+import { executeTrim } from '../core/2d/TrimManager';
 
 function createInitialDocument() {
   const doc = createEmptyCADDocument();
@@ -139,11 +142,110 @@ export const useCADStore = create<CADState>((set, get) => ({
     };
   }),
 
+  addDimension: (dimension, constraint) => set((state) => {
+    if (!state.activeSketchId) return state;
+    return {
+      ...pushUndoState(state),
+      document: addDimensionToSketch(state.document, state.activeSketchId, dimension, constraint),
+    };
+  }),
+
   removeConstraint: (constraintId) => set((state) => {
     if (!state.activeSketchId) return state;
     return {
       ...pushUndoState(state),
       document: removeConstraintFromSketch(state.document, state.activeSketchId, constraintId),
+    };
+  }),
+
+  updateConstraintValue: (constraintId, value) => set((state) => {
+    if (!state.activeSketchId) return state;
+
+    const updatedDocument: CADDocument = {
+      ...state.document,
+      featureTree: state.document.featureTree.map((f) => {
+        if (f.id === state.activeSketchId && f.type === 'SKETCH') {
+          const sketch = f as SketchFeature;
+          const updatedConstraints = sketch.constraints.map((c) => {
+            if (c.id === constraintId) {
+              return { ...c, value };
+            }
+            return c;
+          });
+
+          // Apply constraints to solve the sketch, driving the line shrinking/stretching, and update profiles
+          const updatedSketch = applyConstraintsToSketch({
+            ...sketch,
+            constraints: updatedConstraints,
+          });
+
+          return updatedSketch;
+        }
+        return f;
+      }),
+    };
+
+    return {
+      ...pushUndoState(state),
+      document: updatedDocument,
+    };
+  }),
+
+  trimEntity: (entityId, clickPoint) => set((state) => {
+    if (!state.activeSketchId) return state;
+
+    const sketch = state.document.featureTree.find(
+      (f) => f.id === state.activeSketchId && f.type === 'SKETCH'
+    ) as SketchFeature | undefined;
+
+    if (!sketch) return state;
+
+    const trimResult = executeTrim(entityId, clickPoint, sketch.entities);
+    if (!trimResult) return state;
+
+    const { toRemoveIds, toAddEntities } = trimResult;
+    const toRemoveSet = new Set(toRemoveIds);
+
+    // 1. 過濾失效的約束與對應的尺寸標註
+    const remainingConstraints = sketch.constraints.filter(
+      (c) => !c.entityIds.some((id) => toRemoveSet.has(id))
+    );
+    const removedConstraintIds = new Set(
+      sketch.constraints
+        .filter((c) => c.entityIds.some((id) => toRemoveSet.has(id)))
+        .map((c) => c.id)
+    );
+    const remainingDimensions = sketch.dimensions.filter(
+      (d) => !d.constraintId || !removedConstraintIds.has(d.constraintId)
+    );
+
+    // 2. 更新實體列表，移除 targetEntityId，加入新生成的子圖元
+    const updatedEntities = [
+      ...sketch.entities.filter((e) => !toRemoveSet.has(e.id)),
+      ...toAddEntities,
+    ];
+
+    const tempSketch: SketchFeature = {
+      ...sketch,
+      entities: updatedEntities,
+      constraints: remainingConstraints,
+      dimensions: remainingDimensions,
+    };
+
+    // 3. 重新計算約束、自由度與閉合封閉面
+    const updatedSketch = applyConstraintsToSketch(tempSketch);
+
+    const updatedDocument: CADDocument = {
+      ...state.document,
+      featureTree: state.document.featureTree.map((f) =>
+        f.id === state.activeSketchId ? updatedSketch : f
+      ),
+    };
+
+    return {
+      ...pushUndoState(state),
+      document: updatedDocument,
+      selectedEntityIds: state.selectedEntityIds.filter((id) => !toRemoveSet.has(id)),
     };
   }),
 

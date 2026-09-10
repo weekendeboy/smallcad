@@ -26,6 +26,9 @@ export function isAngleOnArc(
   endAngle: number,
   tolerance: number = 1e-5
 ): boolean {
+  if (Math.abs(endAngle - startAngle) >= 2 * Math.PI - tolerance) {
+    return true;
+  }
   const start = normalizeAngle(startAngle);
   const end = normalizeAngle(endAngle);
   const target = normalizeAngle(theta);

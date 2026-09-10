@@ -23,6 +23,8 @@ import {
   MoveHorizontal,
   MoveVertical,
   Lock,
+  Scissors,
+  Ruler,
 } from 'lucide-react';
 
 export default function App() {
@@ -165,6 +167,28 @@ export default function App() {
               title="Center-Start-End Arc"
             >
               <CircleDot size={18} />
+            </button>
+            <button
+              onClick={() => setTool('TRIM')}
+              className={`p-1.5 rounded ${
+                currentTool === 'TRIM'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Trim (T)"
+            >
+              <Scissors size={18} />
+            </button>
+            <button
+              onClick={() => setTool('DIMENSION')}
+              className={`p-1.5 rounded ${
+                currentTool === 'DIMENSION'
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Dimension (D)"
+            >
+              <Ruler size={18} />
             </button>
 
             <div className="w-px h-5 bg-neutral-800 mx-1" />

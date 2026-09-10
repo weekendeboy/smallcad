@@ -43,6 +43,12 @@ export function useCadShortcuts() {
           case 'l':
             setTool('LINE');
             break;
+          case 'd':
+            setTool('DIMENSION');
+            break;
+          case 't':
+            setTool('TRIM');
+            break;
           case 's':
             setTool('SELECT');
             break;

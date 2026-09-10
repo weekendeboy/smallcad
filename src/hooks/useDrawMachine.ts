@@ -4,6 +4,245 @@ import { Point2D, LineEntity, CircleEntity, ArcEntity, SketchFeature, CADEntity2
 import { DrawSession, createInitialDrawSession } from '../types/sketchInteraction';
 import { findSnapPoint, SnapResult } from '../core/2d/SnapManager';
 import { calculate3PointArc } from '../core/2d/GeometryMath';
+import { isAngleOnArc, normalizeAngle, findAllIntersections } from '../core/2d/IntersectionEngine';
+
+function getDistanceToLineSegment(p: Point2D, sStart: Point2D, sEnd: Point2D): number {
+  const vx = sEnd.x - sStart.x;
+  const vy = sEnd.y - sStart.y;
+  const lenSq = vx * vx + vy * vy;
+  if (lenSq < 1e-10) {
+    return Math.hypot(p.x - sStart.x, p.y - sStart.y);
+  }
+  const dx = p.x - sStart.x;
+  const dy = p.y - sStart.y;
+  const t = Math.max(0, Math.min(1, (dx * vx + dy * vy) / lenSq));
+  const projX = sStart.x + t * vx;
+  const projY = sStart.y + t * vy;
+  return Math.hypot(p.x - projX, p.y - projY);
+}
+
+function getDistanceToArcSegment(
+  p: Point2D,
+  center: Point2D,
+  radius: number,
+  startAngle: number,
+  endAngle: number
+): number {
+  const thetaP = Math.atan2(p.y - center.y, p.x - center.x);
+  if (isAngleOnArc(thetaP, startAngle, endAngle)) {
+    const distToCenter = Math.hypot(p.x - center.x, p.y - center.y);
+    return Math.abs(distToCenter - radius);
+  } else {
+    const pStart = {
+      x: center.x + radius * Math.cos(startAngle),
+      y: center.y + radius * Math.sin(startAngle),
+    };
+    const pEnd = {
+      x: center.x + radius * Math.cos(endAngle),
+      y: center.y + radius * Math.sin(endAngle),
+    };
+    const dStart = Math.hypot(p.x - pStart.x, p.y - pStart.y);
+    const dEnd = Math.hypot(p.x - pEnd.x, p.y - pEnd.y);
+    return Math.min(dStart, dEnd);
+  }
+}
+
+function getDistanceToEntity(p: Point2D, entity: CADEntity2D): number {
+  if (entity.type === 'line') {
+    return getDistanceToLineSegment(p, entity.start, entity.end);
+  } else if (entity.type === 'arc') {
+    return getDistanceToArcSegment(p, entity.center, entity.radius, entity.startAngle, entity.endAngle);
+  } else if (entity.type === 'circle') {
+    const distToCenter = Math.hypot(p.x - entity.center.x, p.y - entity.center.y);
+    return Math.abs(distToCenter - entity.radius);
+  }
+  return Infinity;
+}
+
+function getTrimPreviewSegment(
+  target: CADEntity2D,
+  clickPoint: Point2D,
+  allEntities: CADEntity2D[]
+): CADEntity2D | null {
+  if (target.type !== 'line' && target.type !== 'arc' && target.type !== 'circle') {
+    return null;
+  }
+
+  const allIntersections = findAllIntersections(allEntities);
+  const params: number[] = [];
+  for (const res of allIntersections) {
+    if (res.entityAId === target.id) {
+      params.push(res.paramA);
+    } else if (res.entityBId === target.id) {
+      params.push(res.paramB);
+    }
+  }
+
+  if (params.length === 0) {
+    return null;
+  }
+
+  const deduplicate = (arr: number[], tolerance: number = 1e-5): number[] => {
+    const res: number[] = [];
+    for (const val of arr) {
+      if (!res.some((existing) => Math.abs(existing - val) < tolerance)) {
+        res.push(val);
+      }
+    }
+    return res;
+  };
+
+  if (target.type === 'line') {
+    const tValues = deduplicate([...params, 0, 1].map((t) => Math.max(0, Math.min(1, t))));
+    tValues.sort((a, b) => a - b);
+
+    const subsegments: { start: Point2D; end: Point2D; dist: number }[] = [];
+    for (let i = 0; i < tValues.length - 1; i++) {
+      const tStart = tValues[i];
+      const tEnd = tValues[i + 1];
+      if (tEnd - tStart < 1e-5) continue;
+
+      const pStart = {
+        x: target.start.x + tStart * (target.end.x - target.start.x),
+        y: target.start.y + tStart * (target.end.y - target.start.y),
+      };
+      const pEnd = {
+        x: target.start.x + tEnd * (target.end.x - target.start.x),
+        y: target.start.y + tEnd * (target.end.y - target.start.y),
+      };
+
+      const dist = getDistanceToLineSegment(clickPoint, pStart, pEnd);
+      subsegments.push({ start: pStart, end: pEnd, dist });
+    }
+
+    if (subsegments.length === 0) return null;
+
+    let minIdx = 0;
+    let minDist = subsegments[0].dist;
+    for (let i = 1; i < subsegments.length; i++) {
+      if (subsegments[i].dist < minDist) {
+        minDist = subsegments[i].dist;
+        minIdx = i;
+      }
+    }
+
+    const sub = subsegments[minIdx];
+    return {
+      ...target,
+      id: `trim-preview-${target.id}`,
+      type: 'line',
+      start: sub.start,
+      end: sub.end,
+    } as LineEntity;
+  } else if (target.type === 'arc') {
+    const startAngle = target.startAngle;
+    const endAngle = target.endAngle;
+    const totalSweep = normalizeAngle(endAngle - startAngle);
+
+    const relativeSweeps: number[] = [];
+    for (const p of params) {
+      const sweep = normalizeAngle(p - startAngle);
+      if (sweep <= totalSweep + 1e-5) {
+        relativeSweeps.push(Math.min(totalSweep, Math.max(0, sweep)));
+      }
+    }
+
+    const sValues = deduplicate([...relativeSweeps, 0, totalSweep]);
+    sValues.sort((a, b) => a - b);
+
+    const subarcs: { startAngle: number; endAngle: number; dist: number }[] = [];
+    for (let i = 0; i < sValues.length - 1; i++) {
+      const sStart = sValues[i];
+      const sEnd = sValues[i + 1];
+      if (sEnd - sStart < 1e-5) continue;
+
+      const subStartAngle = normalizeAngle(startAngle + sStart);
+      const subEndAngle = normalizeAngle(startAngle + sEnd);
+      const dist = getDistanceToArcSegment(clickPoint, target.center, target.radius, subStartAngle, subEndAngle);
+
+      subarcs.push({ startAngle: subStartAngle, endAngle: subEndAngle, dist });
+    }
+
+    if (subarcs.length === 0) return null;
+
+    let minIdx = 0;
+    let minDist = subarcs[0].dist;
+    for (let i = 1; i < subarcs.length; i++) {
+      if (subarcs[i].dist < minDist) {
+        minDist = subarcs[i].dist;
+        minIdx = i;
+      }
+    }
+
+    const sub = subarcs[minIdx];
+    return {
+      ...target,
+      id: `trim-preview-${target.id}`,
+      type: 'arc',
+      center: target.center,
+      radius: target.radius,
+      startAngle: sub.startAngle,
+      endAngle: sub.endAngle,
+    } as ArcEntity;
+  } else if (target.type === 'circle') {
+    const sortedAngles = deduplicate(params);
+    sortedAngles.sort((a, b) => a - b);
+
+    if (sortedAngles.length < 2) {
+      return null;
+    }
+
+    const theta0 = sortedAngles[0];
+    const theta1 = sortedAngles[1];
+
+    // 區間 A: startAngle = theta0, endAngle = theta1
+    // 區間 B: startAngle = theta1, endAngle = theta0
+
+    let diffA = theta1 - theta0;
+    while (diffA < 0) diffA += 2 * Math.PI;
+    const midA = normalizeAngle(theta0 + diffA / 2);
+    const midPointA = {
+      x: target.center.x + target.radius * Math.cos(midA),
+      y: target.center.y + target.radius * Math.sin(midA),
+    };
+    const distA = Math.hypot(clickPoint.x - midPointA.x, clickPoint.y - midPointA.y);
+
+    let diffB = (theta0 + 2 * Math.PI) - theta1;
+    while (diffB < 0) diffB += 2 * Math.PI;
+    const midB = normalizeAngle(theta1 + diffB / 2);
+    const midPointB = {
+      x: target.center.x + target.radius * Math.cos(midB),
+      y: target.center.y + target.radius * Math.sin(midB),
+    };
+    const distB = Math.hypot(clickPoint.x - midPointB.x, clickPoint.y - midPointB.y);
+
+    if (distA < distB) {
+      // 點擊落在區間 A，預覽顯示即將刪除的區間 A
+      return {
+        ...target,
+        id: `trim-preview-${target.id}`,
+        type: 'arc',
+        center: target.center,
+        radius: target.radius,
+        startAngle: theta0,
+        endAngle: theta1,
+      } as ArcEntity;
+    } else {
+      // 點擊落在區間 B，預覽顯示即將刪除的區間 B
+      return {
+        ...target,
+        id: `trim-preview-${target.id}`,
+        type: 'arc',
+        center: target.center,
+        radius: target.radius,
+        startAngle: theta1,
+        endAngle: theta0,
+      } as ArcEntity;
+    }
+  }
+
+  return null;
+}
 
 export function useDrawMachine() {
   const currentTool = useCADStore((state) => state.currentTool);
@@ -12,14 +251,22 @@ export function useDrawMachine() {
   const osnapEnabled = useCADStore((state) => state.osnapEnabled);
   const addEntity = useCADStore((state) => state.addEntity);
   const addConstraint = useCADStore((state) => state.addConstraint);
+  const addDimension = useCADStore((state) => state.addDimension);
+  const trimEntity = useCADStore((state) => state.trimEntity);
 
   const [drawSession, setDrawSession] = useState<DrawSession>(createInitialDrawSession());
   const [currentSnap, setCurrentSnap] = useState<SnapResult | null>(null);
+  const [trimPreviewEntity, setTrimPreviewEntity] = useState<CADEntity2D | null>(null);
   const [firstEntityId, setFirstEntityId] = useState<string | null>(null);
   const [lastEntityId, setLastEntityId] = useState<string | null>(null);
   const [snapCenter, setSnapCenter] = useState<SnapResult | null>(null);
   const [snapP1, setSnapP1] = useState<SnapResult | null>(null);
   const [snapP2, setSnapP2] = useState<SnapResult | null>(null);
+
+  // Dimension tool state
+  const [dimSnap1, setDimSnap1] = useState<SnapResult | null>(null);
+  const [dimSnap2, setDimSnap2] = useState<SnapResult | null>(null);
+  const [dimSelectedLineId, setDimSelectedLineId] = useState<string | null>(null);
 
   // 取得目前草圖內的 entities
   let currentEntities: CADEntity2D[] = [];
@@ -40,6 +287,10 @@ export function useDrawMachine() {
     setSnapCenter(null);
     setSnapP1(null);
     setSnapP2(null);
+    setTrimPreviewEntity(null);
+    setDimSnap1(null);
+    setDimSnap2(null);
+    setDimSelectedLineId(null);
   }, []);
 
   // 當工具切換時，將 lastEntityId 與 firstEntityId 徹底重置，並取消繪圖操作
@@ -78,12 +329,38 @@ export function useDrawMachine() {
           currentCursor: finalPt,
         };
       });
+
+      if (currentTool === 'TRIM') {
+        const threshold = 15 / scale;
+        let closestEntity: CADEntity2D | null = null;
+        let minDistance = threshold;
+
+        for (const entity of currentEntities) {
+          if (entity.type === 'line' || entity.type === 'arc' || entity.type === 'circle') {
+            const tolerance = entity.type === 'circle' ? 8 / scale : threshold;
+            const dist = getDistanceToEntity(worldPt, entity);
+            if (dist < tolerance && dist < minDistance) {
+              minDistance = dist;
+              closestEntity = entity;
+            }
+          }
+        }
+
+        if (closestEntity) {
+          const previewSeg = getTrimPreviewSegment(closestEntity, worldPt, currentEntities);
+          setTrimPreviewEntity(previewSeg);
+        } else {
+          setTrimPreviewEntity(null);
+        }
+      } else {
+        setTrimPreviewEntity(null);
+      }
     },
-    [osnapEnabled, currentEntities]
+    [osnapEnabled, currentEntities, currentTool]
   );
 
   const handleCanvasClick = useCallback(
-    (worldPt: Point2D) => {
+    (worldPt: Point2D, scale: number = 1.0) => {
       if (!activeSketchId) return;
 
       const clickPt = currentSnap ? currentSnap.point : worldPt;
@@ -490,6 +767,124 @@ export function useDrawMachine() {
           // 呼叫 cancelDrawing() 結束工作階段
           cancelDrawing();
         }
+      } else if (currentTool === 'DIMENSION') {
+        if (!drawSession.isDrawing || drawSession.step === 0) {
+          // 第 1 次點擊：
+          // 1. 檢查是否點擊在端點 (endpoint snap)
+          if (currentSnap && currentSnap.type === 'endpoint') {
+            setDimSnap1(currentSnap);
+            setDrawSession({
+              isDrawing: true,
+              startPoint: currentSnap.point,
+              currentCursor: clickPt,
+              step: 1, // 進入步驟 1：等待點擊第二個端點
+            });
+          } else {
+            // 2. 檢查是否點擊在單一線段上
+            const threshold = 15 / scale;
+            let closestLine: LineEntity | null = null;
+            let minDistance = threshold;
+
+            for (const entity of currentEntities) {
+              if (entity.type === 'line') {
+                const dist = getDistanceToEntity(clickPt, entity);
+                if (dist < minDistance) {
+                  minDistance = dist;
+                  closestLine = entity;
+                }
+              }
+            }
+
+            if (closestLine) {
+              setDimSelectedLineId(closestLine.id);
+              setDrawSession({
+                isDrawing: true,
+                startPoint: closestLine.start,
+                secondPoint: closestLine.end,
+                currentCursor: clickPt,
+                step: 2, // 直接進入步驟 2：等待游標移動並進行第三次點擊 (鎖定 textPosition)
+              });
+            }
+          }
+        } else if (drawSession.step === 1 && drawSession.startPoint) {
+          // 第二次點擊 (端點模式下)：
+          if (currentSnap && currentSnap.type === 'endpoint') {
+            setDimSnap2(currentSnap);
+            setDrawSession((prev) => ({
+              ...prev,
+              secondPoint: currentSnap.point,
+              currentCursor: clickPt,
+              step: 2, // 進入步驟 2：等待游標移動並進行第三次點擊 (鎖定 textPosition)
+            }));
+          }
+        } else if (drawSession.step === 2 && drawSession.startPoint && drawSession.secondPoint) {
+          // 第三次點擊 (單線模式下為第二次點擊)：
+          // 鎖定 textPosition，正式建立 Dimension 物件與對應的驅動約束，並寫入 Zustand
+          const p1 = drawSession.startPoint;
+          const p2 = drawSession.secondPoint;
+          const textPosition = clickPt;
+          const physicalLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+          const dimensionId = crypto.randomUUID();
+          const constraintId = crypto.randomUUID();
+
+          const newDimension = {
+            id: dimensionId,
+            type: 'linear' as const,
+            points: [p1, p2],
+            textPosition: textPosition,
+            constraintId: constraintId,
+          };
+
+          let newConstraint;
+          if (dimSelectedLineId) {
+            newConstraint = {
+              id: constraintId,
+              type: 'length' as const,
+              entityIds: [dimSelectedLineId],
+              value: physicalLen,
+            };
+          } else if (dimSnap1 && dimSnap2) {
+            newConstraint = {
+              id: constraintId,
+              type: 'distance' as const,
+              entityIds: [dimSnap1.entityId, dimSnap2.entityId],
+              pointIndices: [dimSnap1.pointIndex ?? 0, dimSnap2.pointIndex ?? 0],
+              value: physicalLen,
+            };
+          } else {
+            newConstraint = {
+              id: constraintId,
+              type: 'distance' as const,
+              entityIds: [],
+              value: physicalLen,
+            };
+          }
+
+          addDimension(newDimension, newConstraint);
+          cancelDrawing();
+        }
+      } else if (currentTool === 'TRIM') {
+        if (trimPreviewEntity) {
+          const hitEntityId = trimPreviewEntity.id.replace('trim-preview-', '');
+          trimEntity(hitEntityId, clickPt);
+        } else {
+          // Fallback search
+          let closestEntity: CADEntity2D | null = null;
+          let minDistance = 5.0; // generous world units
+          for (const entity of currentEntities) {
+            if (entity.type === 'line' || entity.type === 'arc' || entity.type === 'circle') {
+              const dist = getDistanceToEntity(clickPt, entity);
+              if (dist < minDistance) {
+                minDistance = dist;
+                closestEntity = entity;
+              }
+            }
+          }
+          if (closestEntity) {
+            trimEntity(closestEntity.id, clickPt);
+          }
+        }
       }
     },
     [
@@ -506,12 +901,19 @@ export function useDrawMachine() {
       addEntity,
       addConstraint,
       cancelDrawing,
+      trimEntity,
+      trimPreviewEntity,
+      dimSnap1,
+      dimSnap2,
+      dimSelectedLineId,
+      addDimension,
     ]
   );
 
   return {
     drawSession,
     currentSnap,
+    trimPreviewEntity,
     handlePointerMove,
     handleCanvasClick,
     cancelDrawing,

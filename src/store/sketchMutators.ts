@@ -96,6 +96,28 @@ export function addConstraintToSketch(doc: CADDocument, sketchId: string, constr
   };
 }
 
+export function addDimensionToSketch(
+  doc: CADDocument,
+  sketchId: string,
+  dimension: any,
+  constraint: Constraint
+): CADDocument {
+  return {
+    ...doc,
+    featureTree: doc.featureTree.map((feature) => {
+      if (feature.id === sketchId && feature.type === 'SKETCH') {
+        const updatedSketch: SketchFeature = {
+          ...feature,
+          dimensions: [...(feature.dimensions || []), dimension],
+          constraints: [...feature.constraints, constraint],
+        };
+        return applyConstraintsToSketch(updatedSketch);
+      }
+      return feature;
+    }),
+  };
+}
+
 export function removeConstraintFromSketch(doc: CADDocument, sketchId: string, constraintId: string): CADDocument {
   return {
     ...doc,
